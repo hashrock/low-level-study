@@ -17,6 +17,8 @@
 
 必要なもの: Go 1.27、Zig 0.17、QEMU（`brew install go zig qemu`）。
 
+用語が分からなくなったら [`GLOSSARY.md`](GLOSSARY.md)（分野別の用語集。各用語がどのファイル・ページに出てくるかも書いてあります）。
+
 ```
           ┌──────────┐  .s
  .lang ──▶│ compiler │──────┐
