@@ -35,6 +35,7 @@
 ## ブラウザで動かす（内部状態を覗く）
 
 全部 Go → WebAssembly にして、ブラウザ上で動かしながら中身を可視化できます。
+公開版: https://hashrock.github.io/low-level-study/ （main への push で GitHub Actions が自動でビルド・デプロイ）
 
 ```sh
 ./web/build.sh                      # 全ページの wasm をビルド（os は zig build も実行）
