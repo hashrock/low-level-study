@@ -12,15 +12,20 @@
 | [`emu/`](emu/) | Go | RV64IMAC エミュレータ。`os/` のカーネルも起動できる |
 | [`asm/`](asm/) | Go | RISC-V アセンブラ + リンカ（本物の ELF を出力） |
 | [`compiler/`](compiler/) | Go | `lang` → RISC-V ネイティブコンパイラ（`asm` と `emu` を使う） |
+| [`cc/`](cc/) | Go | C サブセット → RISC-V コンパイラ（静的型。`compiler/` との比較用、libc は自分自身でコンパイル） |
 | [`net/`](net/) | Go | ユーザ空間 TCP/IP スタック。仮想ケーブル + pcap 出力 |
 
 必要なもの: Go 1.27、Zig 0.17、QEMU（`brew install go zig qemu`）。
 
 ```
-          ┌──────────┐  .s   ┌──────┐  ELF  ┌──────┐
- .lang ──▶│ compiler │──────▶│ asm  │──────▶│ emu  │◀── os/ の kernel.elf
-          └──────────┘       └──────┘       └──────┘
- .lang ──▶ lang（バイトコード VM）            ↑ QEMU の代わり
+          ┌──────────┐  .s
+ .lang ──▶│ compiler │──────┐
+          └──────────┘      ▼
+          ┌──────────┐  .s ┌──────┐  ELF  ┌──────┐
+ .c ─────▶│    cc    │────▶│ asm  │──────▶│ emu  │◀── os/ の kernel.elf
+          └──────────┘     └──────┘       └──────┘
+                                          ↑ QEMU の代わり
+ .lang ──▶ lang（バイトコード VM）
 ```
 
 ---
@@ -43,6 +48,12 @@ go run . run --trace /tmp/fib | head -50         # 1 命令ずつのトレース
 やってみること:
 - 同じ `fib.lang` を `cd lang && go run . -dis examples/fib.lang` でバイトコードにして、ネイティブコードと見比べる
 - `fib(25)` の実行命令数（約 1700 万）を、`compiler/codegen.go` をいじって減らしてみる（レジスタ割り当て、インライン化…）
+- 同じ fib を C で書いた `cc/` 版と比べる（静的型だと約 490 万命令。タグ検査やランタイム呼び出しが消える）:
+  ```sh
+  cd cc
+  go run . emit -O0 examples/fib.c | less        # -O0 / -O1 / -O2 で生成コードを見比べる
+  go run . run --stats examples/fib.c
+  ```
 
 ### 2. 自作 OS を自作 CPU で起動する
 
@@ -150,6 +161,6 @@ go run . --allow-read=examples/data --timeout=2s examples/sandbox_escape.js
 ## テスト
 
 ```sh
-for d in db lang runtime emu asm compiler net; do (cd $d && go test ./...); done
+for d in db lang runtime emu asm compiler cc net; do (cd $d && go test ./...); done
 cd os && zig build && ./test.exp                 # QEMU 上でシェルを自動操作
 ```

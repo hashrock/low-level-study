@@ -1,0 +1,6 @@
+before: 1468 9988 2117 3498 6927 ...
+sorted: 5 15 19 25 29 ... 9999
+is_sorted(asc) = 1
+desc:   9999 9995 9992 ... 5
+is_sorted(desc) = 1
+sum = 4682264

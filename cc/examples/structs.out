@@ -1,0 +1,10 @@
+sizeof: char=1 short=2 int=4 long=8 ptr=8
+struct A: size 12, i@4 d@8
+struct B: size 16, l@8
+struct C: size 8
+struct D: size 16, tail@12
+struct E: size 32, name@8 b@16
+struct A[4]: size 48, &arr[3] - &arr[0] = 36 bytes
+area = 50
+area = 100, original = 50
+r.max.y = 12

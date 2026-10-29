@@ -1,0 +1,11 @@
+len("hello, world") = 12 / 12
+reversed: dlrow ,olleh
+upper: DLROW ,OLLEH
+count 'l': 3
+concat: foobarbaz (9)
+cmp: 1 1 1
+p[3] = 40, *(p + 1) = 20, 2[p] = 30
+&nums[4] - &nums[1] = 3
+byte distance: 16, long step: 24
+alpha beta gamma
+   42|42   |00042|ff|ok

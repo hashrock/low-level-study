@@ -1,0 +1,5 @@
+argc = 4
+argv[1] = "hello"
+argv[2] = "RISC-V world"
+argv[3] = "42"
+sum of numeric args = 42

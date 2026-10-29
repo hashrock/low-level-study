@@ -1,0 +1,6 @@
+// ../compiler 用の同じプログラム (比較用): cd ../compiler && go run . build ../cc/bench/fib25.lang -o /tmp/f
+fn fib(n) {
+  if (n < 2) { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+print(fib(25))
