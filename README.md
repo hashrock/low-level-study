@@ -13,9 +13,10 @@
 | [`asm/`](asm/) | Go | RISC-V アセンブラ + リンカ（本物の ELF を出力） |
 | [`compiler/`](compiler/) | Go | `lang` → RISC-V ネイティブコンパイラ（`asm` と `emu` を使う） |
 | [`cc/`](cc/) | Go | C サブセット → RISC-V コンパイラ（静的型。`compiler/` との比較用、libc は自分自身でコンパイル） |
+| [`hw/`](hw/) | Verilog | RISC-V CPU（シングルサイクル + 5 段パイプライン）。`asm`/`cc` の出力を動かし、`emu` と 1 命令ずつ突き合わせる。波形 (VCD) も出せる |
 | [`net/`](net/) | Go | ユーザ空間 TCP/IP スタック。仮想ケーブル + pcap 出力 |
 
-必要なもの: Go 1.27、Zig 0.17、QEMU（`brew install go zig qemu`）。
+必要なもの: Go 1.27、Zig 0.17、QEMU、Icarus Verilog（`brew install go zig qemu icarus-verilog`）。
 
 用語が分からなくなったら [`GLOSSARY.md`](GLOSSARY.md)（分野別の用語集。各用語がどのファイル・ページに出てくるかも書いてあります）。
 
@@ -27,6 +28,7 @@
  .c ─────▶│    cc    │────▶│ asm  │──────▶│ emu  │◀── os/ の kernel.elf
           └──────────┘     └──────┘       └──────┘
                                           ↑ QEMU の代わり
+                                   ELF ──▶ hw（Verilog の CPU）  ← emu と 1 命令ずつ突き合わせ
  .lang ──▶ lang（バイトコード VM）
 ```
 
@@ -187,5 +189,6 @@ go run . --allow-read=examples/data --timeout=2s examples/sandbox_escape.js
 
 ```sh
 for d in db lang runtime emu asm compiler cc net web/pipeline/wasm; do (cd $d && go test ./...); done
+cd hw && make test-short                         # Verilog CPU を emu と突き合わせ（全部は make test、約 2 分）
 cd os && zig build && ./test.exp                 # QEMU 上でシェルを自動操作
 ```
