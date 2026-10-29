@@ -31,6 +31,16 @@
     <p>Zig 製ミニ OS を RISC-V エミュレータで起動。シェルを触りながら CPU を一時停止して覗く。</p>
     <ul><li>レジスタ・CSR・特権モード (U/M)</li><li>逆アセンブル・1 命令ステップ</li><li>トラップ／システムコールのログ・メモリダンプ</li></ul>
   </a>
+  <a class="card" href="hw/">
+    <h2>CPU を 1 クロックずつ <code>hw (Verilog)</code></h2>
+    <p>Verilog で書いた RISC-V CPU を本物のシミュレーション波形で再生。命令が回路のどの線を流れるかを見る。</p>
+    <ul><li>データパス図・使われる線のハイライト</li><li>パイプライン図 (バブル・フォワーディング・フラッシュ)</li><li>ミニ波形ビューア</li></ul>
+  </a>
+  <a class="card" href="gates/">
+    <h2>論理ゲート <code>transistor → gate → adder</code></h2>
+    <p>CMOS トランジスタから NAND、加算器、デコーダ、フリップフロップまで。ビットが伝わる様子をアニメーションで。</p>
+    <ul><li>桁上がりの伝搬とクリティカルパス</li><li>opcode デコーダ (decoder.v と対応)</li><li>クロックの立ち上がりで値を取り込む</li></ul>
+  </a>
   <a class="card" href="pipeline/">
     <h2>コンパイル → 実行 <code>cc / compiler → asm → emu</code></h2>
     <p>C や minilang のソースが、アセンブリ → 機械語のビット → ELF → CPU 実行になるまでを一画面で。</p>

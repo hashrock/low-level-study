@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" shared/wasm_exec.js
-for d in os pipeline lang db net runtime; do
+for d in os pipeline lang db net runtime hw; do
   if [ -x "$d/build.sh" ]; then
     echo "== $d"
     "$d/build.sh"

@@ -1,3 +1,4 @@
 *.wasm
 os/kernel.elf
 pipeline/examples/
+hw/traces/

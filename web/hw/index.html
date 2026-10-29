@@ -1,0 +1,1448 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verilog CPU ビューア</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .wide { grid-column: 1 / -1; }
+  @media (min-width: 1100px) { .span2 { grid-column: span 2; } }
+  .notes { margin: 0; padding-left: 1.2em; }
+  .notes li { margin: 3px 0; }
+  .notes code, .expl code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+  .status { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #error:empty { display: none; }
+  #error { margin: 0 0 8px; white-space: pre-wrap; }
+  .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+  select { max-width: 100%; }
+  input.n { width: 5.5em; }
+  input[type=range] { flex: 1 1 160px; min-width: 120px; accent-color: var(--accent); }
+  .ctl { overflow: visible; }
+  @media (min-width: 900px) { .ctl { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px color-mix(in srgb, var(--text) 8%, transparent); } }
+  .ctl .toolbar:last-child { margin-bottom: 0; }
+  .phase { font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .phase .ph { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .phase .ph.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+  .phase .ph.edge.on { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--panel)); }
+  .curinst { font-family: var(--mono); font-size: 13px; }
+  .curinst b { color: var(--accent); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.err { color: var(--err); border-color: var(--err); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+
+  /* ---- データパス (SVG) ---- */
+  .dpwrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+  svg.dp { display: block; width: 100%; min-width: 1000px; height: auto; }
+  .dpwrap.fit svg.dp { min-width: 0; }
+  svg text { font-family: var(--sans); }
+  .u rect, .u polygon { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; }
+  .u.on rect, .u.on polygon { stroke: var(--text); fill: var(--panel); }
+  .u.edge rect, .u.edge polygon { stroke: var(--warn); stroke-width: 3; fill: color-mix(in srgb, var(--warn) 14%, var(--panel)); }
+  .u .t { font-size: 14px; font-weight: 600; fill: var(--muted); text-anchor: middle; }
+  .u.on .t { fill: var(--text); }
+  .u .s { font-size: 11px; fill: var(--muted); text-anchor: middle; }
+  .u .d { font: 12px var(--mono); fill: var(--text); text-anchor: middle; }
+  .u .d.hot { fill: var(--warn); font-weight: 700; }
+  .u.fhl rect, .u.fhl polygon { stroke: var(--fc); stroke-width: 3; }
+  .w { fill: none; stroke: var(--border); stroke-width: 2; stroke-linejoin: round; }
+  .w.on { stroke: var(--accent); stroke-width: 2.6; }
+  .w.ctrl { stroke-dasharray: 5 4; stroke-width: 1.4; }
+  .w.ctrl.on { stroke: var(--c3); stroke-width: 1.8; }
+  .w.fhl, .w.ctrl.fhl { stroke: var(--fc); stroke-width: 4.5; stroke-dasharray: none; }
+  .wa { fill: var(--border); }
+  .wa.on { fill: var(--accent); }
+  .wa.ctrl.on { fill: var(--c3); }
+  .wa.fhl { fill: var(--fc); }
+  .jd { fill: var(--border); }
+  .jd.on { fill: var(--accent); }
+  .wl { font: 12.5px var(--mono); fill: var(--muted); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+  .wl.on { fill: var(--text); }
+  .wl.ctrl.on { fill: var(--c3); }
+  .wl.fhl { fill: var(--fc); font-weight: 700; }
+  .msel { stroke: var(--accent); stroke-width: 3; fill: none; stroke-linecap: round; }
+  .mux-in { font: 10px var(--mono); fill: var(--muted); }
+  .clkmark { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 22px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 4px; }
+
+  /* ---- 命令のビット ---- */
+  .bitwrap { overflow-x: auto; padding-bottom: 4px; }
+  .bits { display: grid; grid-template-columns: repeat(32, minmax(14px, 1fr)); font-family: var(--mono); font-size: 12px; min-width: 470px; }
+  .bits .idx { text-align: center; color: var(--muted); font-size: 9.5px; }
+  .bits .b { text-align: center; padding: 4px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--k) 18%, var(--panel)); cursor: default; }
+  .bits .f { text-align: center; font-size: 11px; padding: 3px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: color-mix(in srgb, var(--k) 18%, var(--panel)); box-shadow: inset 0 -3px 0 var(--k); cursor: default; }
+  .bits .fv { text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bits .first { border-left: 2px solid var(--panel); }
+  .bits .hov { background: color-mix(in srgb, var(--k) 40%, var(--panel)); }
+  .k-opcode { --k: var(--c1); } .k-rd { --k: var(--c2); } .k-funct3 { --k: var(--c3); } .k-rs1 { --k: var(--c4); }
+  .k-rs2 { --k: var(--c6); } .k-imm { --k: var(--c5); } .k-funct7 { --k: var(--muted); }
+  .fieldinfo { font-size: 13px; margin-top: 6px; }
+  .fieldinfo code { font-family: var(--mono); }
+
+  /* ---- 表 ---- */
+  table.kv td.v { font-variant-numeric: tabular-nums; }
+  table.kv td.desc { color: var(--muted); white-space: normal; font-family: var(--sans); min-width: 12em; }
+  table.kv td.nm { color: var(--c3); }
+  table.kv tr.off td.v { color: var(--muted); }
+  .scroll { max-height: 420px; overflow: auto; }
+  .regs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 10px; font-family: var(--mono); font-size: 12px; }
+  .regs div { display: flex; justify-content: space-between; gap: 6px; padding: 1px 4px; border-bottom: 1px solid var(--border); }
+  .regs .rn { color: var(--muted); }
+  .regs .pend { box-shadow: inset 3px 0 0 var(--warn); }
+  .terminal.small { min-height: 60px; height: 80px; }
+
+  /* ---- ソース ---- */
+  .code { font-family: var(--mono); font-size: 12px; line-height: 18px; min-width: max-content; }
+  .ln { white-space: pre; display: flex; cursor: pointer; padding-right: 8px; }
+  .ln .no { color: var(--muted); min-width: 2.6em; text-align: right; padding-right: 8px; flex: none; user-select: none; }
+  .ln .ad { color: var(--muted); min-width: 4.6em; flex: none; }
+  .ln .tags { min-width: 3.6em; flex: none; display: inline-flex; gap: 2px; }
+  .ln .tag { font-size: 10px; padding: 0 3px; border-radius: 3px; color: var(--panel); background: var(--k); line-height: 16px; height: 16px; align-self: center; }
+  .ln.cmt .src { color: var(--muted); }
+  .ln:hover { background: var(--panel-2); }
+  .ln.current { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+
+  /* ---- パイプライン ---- */
+  .pstrip { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  svg.ps { display: block; width: 100%; min-width: 760px; height: auto; }
+  .stg rect.box { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; }
+  .stg.bubble rect.box { fill: var(--panel); stroke-dasharray: 5 4; }
+  .stg .st { font-size: 15px; font-weight: 700; fill: var(--text); }
+  .stg .di { font: 12.5px var(--mono); fill: var(--text); }
+  .stg .pcx { font: 11px var(--mono); fill: var(--muted); }
+  .stg .note { font-size: 11.5px; fill: var(--warn); font-weight: 600; }
+  .preg { fill: var(--muted); }
+  .preg-l { font: 10px var(--mono); fill: var(--muted); text-anchor: middle; }
+  .farrow { fill: none; stroke-width: 2.5; }
+  .farrow.off { stroke: var(--border); stroke-dasharray: 4 4; stroke-width: 1.4; }
+  .flab { font-size: 11.5px; }
+  .xmark { stroke: var(--err); stroke-width: 3; }
+  .pdiag { max-height: 440px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  svg.pd text { font-family: var(--mono); }
+  .pd .lab { font-size: 11.5px; fill: var(--text); }
+  .pd .lab.dim { fill: var(--muted); }
+  .pd .cell text { font-size: 11px; text-anchor: middle; fill: var(--text); }
+  .pd .hdr { font-size: 10.5px; fill: var(--muted); text-anchor: middle; cursor: pointer; }
+  .pd .hdr.cur { fill: var(--accent); font-weight: 700; }
+  .pd .colhl { fill: var(--accent-soft); }
+  .pd .future { opacity: .22; }
+  .pd .strike { stroke: var(--err); stroke-width: 1.6; }
+  .pd .bcell { fill: none; stroke: var(--muted); stroke-dasharray: 3 3; }
+  .cmp { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; align-items: center; margin: 8px 0; }
+  .cmp .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .cmp .bar { height: 18px; border-radius: 0 4px 4px 0; min-width: 2px; background: var(--bc); transition: width .3s; }
+  .cmp .val { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .hz { font-size: 13px; margin: 6px 0 0; padding-left: 1.2em; }
+  .hz li { margin: 2px 0; }
+
+  /* ---- 波形 ---- */
+  .wv { display: grid; grid-template-columns: minmax(118px, max-content) minmax(0, 1fr); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .wvnames { border-right: 1px solid var(--border); background: var(--panel-2); font-family: var(--mono); font-size: 11.5px; }
+  .wvnames div { height: 24px; line-height: 24px; padding: 0 6px; white-space: nowrap; display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--border); }
+  .wvnames div.hd { color: var(--muted); }
+  .wvnames .cv { color: var(--accent); }
+  .wvscroll { overflow-x: auto; overflow-y: hidden; }
+  svg.wave { display: block; cursor: crosshair; }
+  .wave .hi { stroke: var(--c2); stroke-width: 1.6; fill: none; }
+  .wave .bus { fill: color-mix(in srgb, var(--c1) 10%, var(--panel)); stroke: var(--c1); stroke-width: 1.2; }
+  .wave .busx { fill: color-mix(in srgb, var(--err) 18%, var(--panel)); stroke: var(--err); }
+  .wave .bt { font: 10.5px var(--mono); fill: var(--text); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .wave .clk { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+  .wave .grid { stroke: var(--border); stroke-width: 1; }
+  .wave .cur { fill: var(--accent-soft); opacity: .7; }
+  .wave .cursor { stroke: var(--warn); stroke-width: 2; }
+  .wave .tl { font: 10px var(--mono); fill: var(--muted); text-anchor: middle; }
+  .wave .rowline { stroke: var(--border); }
+  details.sigpick summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 4px 0; }
+  .sigpick .grp { margin: 4px 0; font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: center; }
+  .sigpick .grp b { color: var(--muted); font-weight: 600; min-width: 5em; }
+  .sigpick label { font-family: var(--mono); white-space: nowrap; display: inline-flex; gap: 3px; align-items: center; }
+  .expl p { margin: 6px 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>自作 CPU (Verilog) を 1 クロックずつ</h1>
+  <div class="status">
+    <span class="badge" id="coreBadge">-</span>
+    <span class="badge" id="cycBadge">cycle -</span>
+    <span class="badge" id="cpiBadge">CPI -</span>
+  </div>
+</header>
+<main>
+  <div id="loading" class="loading">トレース (Verilog シミュレーションの波形) を読み込み中…</div>
+  <pre id="error" class="err"></pre>
+  <div id="app" hidden>
+    <div class="grid">
+      <section class="panel wide">
+        <h2>このページについて</h2>
+        <ul class="notes">
+          <li><code>hw/</code> の Verilog で書いた RISC-V CPU を、ビルド時に <b>Icarus Verilog で本当にシミュレーション</b>し、その波形 (VCD) を 1 クロックずつ再生しています。値はすべて回路の信号そのもので、ブラウザ側で命令を実行し直してはいません。</li>
+          <li>単一サイクル版は「▶ 1 ステップ」を押すたびに <b>① 組み合わせ回路が落ち着く</b> → <b>② クロックの立ち上がりエッジで pc・レジスタ・メモリが一斉に更新</b> の 2 段階で進みます。線の色はデコーダが出した制御信号で決めています (使われていない経路は薄い灰色)。</li>
+          <li>キーボード: <code>→</code> 進む、<code>←</code> 戻る、<code>Space</code> 再生/停止。命令のビットの欄にマウスを乗せると、そのビットが流れていく線が光ります。</li>
+        </ul>
+      </section>
+
+      <section class="panel wide ctl">
+        <div class="toolbar">
+          <select id="demo" aria-label="デモ"></select>
+          <select id="core" aria-label="コア">
+            <option value="single">単一サイクル版 (core.v)</option>
+            <option value="pipe">5 段パイプライン版 (core_pipe.v)</option>
+          </select>
+          <span class="sep"></span>
+          <button id="first" title="最初へ">⏮</button>
+          <button id="back" title="戻る (←)">◀ 戻る</button>
+          <button id="step" class="primary" title="進む (→)">▶ 1 ステップ</button>
+          <button id="play" title="再生 (Space)">再生</button>
+          <select id="speed" aria-label="速さ">
+            <option value="1200">ゆっくり</option>
+            <option value="600" selected>ふつう</option>
+            <option value="250">速い</option>
+            <option value="80">とても速い</option>
+          </select>
+          <span class="sep"></span>
+          <label class="muted" for="jump">cycle</label>
+          <input id="jump" class="n" type="number" min="0" value="0">
+          <input id="slider" type="range" min="0" value="0" aria-label="サイクル">
+        </div>
+        <div class="toolbar phase">
+          <span class="curinst" id="curinst"></span>
+          <span id="phaseBox"><span class="ph" id="ph0">① 落ち着いた (エッジ直前)</span> <span class="ph edge" id="ph1">② 立ち上がりエッジ</span></span>
+          <span id="flags"></span>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <h2 id="notesTitle">見どころ</h2>
+        <ul class="notes" id="notes"></ul>
+      </section>
+
+      <!-- ===== 単一サイクル版 ===== -->
+      <section class="panel wide" id="dpPanel">
+        <div class="toolbar">
+          <h2 style="margin:0">データパス (単一サイクル版 core.v)</h2>
+          <button id="fit" style="margin-left:auto">全体を縮小表示</button>
+        </div>
+        <div class="dpwrap" id="dpwrap"><svg class="dp" id="dp" viewBox="0 0 1280 640" role="img" aria-label="単一サイクル版のデータパス"></svg></div>
+        <div class="legend">
+          <span><i style="border-color:var(--accent)"></i>この命令が使っているデータの線</span>
+          <span><i style="border-color:var(--c3);border-top-style:dashed"></i>制御信号 (デコーダから)</span>
+          <span><i style="border-color:var(--border)"></i>使っていない線 (値は流れているが結果に効かない)</span>
+          <span><i style="border-color:var(--warn)"></i>エッジで書き込まれる部品</span>
+        </div>
+      </section>
+
+      <section class="panel" id="bitsPanel">
+        <h2>命令のビット</h2>
+        <div class="bitwrap"><div class="bits" id="bits"></div></div>
+        <div class="fieldinfo" id="fieldinfo"></div>
+      </section>
+
+      <section class="panel" id="ctrlPanel">
+        <h2>制御信号 (このサイクル)</h2>
+        <div class="scroll"><table class="kv" id="ctrl"></table></div>
+      </section>
+
+      <!-- ===== パイプライン版 ===== -->
+      <section class="panel wide" id="stripPanel" hidden>
+        <h2>5 段のステージ (このサイクルに各ステージにいる命令)</h2>
+        <div class="pstrip"><svg class="ps" id="ps" viewBox="0 0 1000 268" role="img" aria-label="パイプラインの 5 ステージ"></svg></div>
+        <ul class="hz" id="hz"></ul>
+      </section>
+
+      <section class="panel wide" id="diagPanel" hidden>
+        <h2>パイプライン図 (行 = 命令、列 = サイクル)</h2>
+        <div class="pdiag" id="pdiag"></div>
+        <div class="legend">
+          <span>空の点線のセル = バブル (何もしない nop)</span>
+          <span><span style="color:var(--err)">取り消し線</span> = 分岐で捨てた命令</span>
+          <span><i style="border-color:var(--c3)"></i>EX/MEM → EX のフォワーディング</span>
+          <span><i style="border-color:var(--c4)"></i>MEM/WB → EX のフォワーディング</span>
+          <span>薄いセル = まだ先のサイクル</span>
+        </div>
+      </section>
+
+      <section class="panel" id="hzPanel" hidden>
+        <h2>ハザード・フォワーディングの信号</h2>
+        <div class="scroll"><table class="kv" id="hzt"></table></div>
+      </section>
+
+      <section class="panel" id="cmpPanel">
+        <h2>単一サイクル版 と パイプライン版</h2>
+        <div id="cmp"></div>
+      </section>
+
+      <!-- ===== 共通 ===== -->
+      <section class="panel" id="srcPanel">
+        <h2 id="srcTitle">ソース</h2>
+        <div class="scroll" id="srcScroll"><div class="code" id="src"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2 id="regsTitle">レジスタ</h2>
+        <div class="regs" id="regs"></div>
+        <h2 style="margin-top:10px">コンソール (MMIO 0x10000000)</h2>
+        <div class="terminal small" id="console"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="toolbar">
+          <h2 style="margin:0">波形 (ミニ GTKWave)</h2>
+          <span class="muted" style="font-size:12px">クリックでそのサイクルへ</span>
+          <span style="margin-left:auto"></span>
+          <button id="zout" title="縮小">−</button>
+          <button id="zin" title="拡大">＋</button>
+        </div>
+        <details class="sigpick" id="sigpick"><summary>表示する信号を選ぶ</summary><div id="sigboxes"></div></details>
+        <div class="wv">
+          <div class="wvnames" id="wvnames"></div>
+          <div class="wvscroll" id="wvscroll"><svg class="wave" id="wave"></svg></div>
+        </div>
+      </section>
+
+      <section class="panel wide expl">
+        <h2>パイプラインは CPI &gt; 1 なのに、なぜ速いのか</h2>
+        <p>パイプライン版の CPI (1 命令あたりのサイクル数) は 1 より大きくなります。分岐成立・ジャンプで 2 バブル、load-use で 1 バブル、<code>ecall</code> で 3 バブルが入るからです。</p>
+        <p><b>それでも速い</b>のは、1 サイクルの仕事が約 1/5 になるので<b>クロック周波数を上げられる</b>からです。単一サイクル版のクロック周期は「命令 RAM → デコーダ → レジスタ → ALU → データ RAM → 書き戻し」の全部の遅延 (クリティカルパス) で決まります。パイプライン版は 1 ステージ分の遅延で済みます。</p>
+        <p>シミュレータ上の「サイクル数」だけを見ると単一サイクル版が勝って見えるので注意。かかる時間 = サイクル数 × クロック周期 です。CPI を 1 に近づけるのが、分岐予測 (BTB)・分岐を ID で解決する・などの工夫です。(<code>hw/README.md</code> より)</p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const ABI = ["zero","ra","sp","gp","tp","t0","t1","t2","s0","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
+const A_SEL = ["RS1", "PC", "ZERO", "?"];
+const B_SEL = ["RS2", "IMM"];
+const WB_SEL = ["ALU", "MEM", "PC4", "SYS"];
+const IMM_SEL = ["I", "S", "B", "U", "J", "?", "?", "?"];
+const ALU_OP = { 0: "ADD", 8: "SUB", 1: "SLL", 2: "SLT", 3: "SLTU", 4: "XOR", 5: "SRL", 13: "SRA", 6: "OR", 7: "AND" };
+const OPC = { 0x03: "LOAD", 0x0f: "MISC-MEM", 0x13: "OP-IMM", 0x17: "AUIPC", 0x1b: "OP-IMM-32", 0x23: "STORE", 0x33: "OP", 0x37: "LUI", 0x3b: "OP-32", 0x63: "BRANCH", 0x67: "JALR", 0x6f: "JAL", 0x73: "SYSTEM" };
+const LOADN = ["lb", "lh", "lw", "ld", "lbu", "lhu", "lwu", "?"], STOREN = ["sb", "sh", "sw", "sd"];
+
+// ---------------- 各デモの見どころ ----------------
+const NOTES = {
+  arith: {
+    single: [
+      "2 命令目の <code>addi a0, a0, -1</code> (= <code>0xfff50513</code>) で止めて見てみましょう (cycle 1)。opcode が OP-IMM なのでデコーダが <code>b_sel = IMM</code> にし、ALU の B 側のマルチプレクサが rs2 ではなく<b>即値 (-1)</b> を選びます。",
+      "<code>alu_a = 5</code>、<code>alu_b = -1</code> (64 ビットの 0xffff…ffff)、<code>alu_y = 4</code>。① の時点ではレジスタの a0 はまだ 5 で、② の立ち上がりエッジで 5 → 4 に変わります。同じエッジで pc も次の命令 (pc + 4) に進みます。",
+      "<code>add a2, a0, a1</code> (R 形式) では <code>b_sel = RS2</code> に戻り、rs2 の線が光ります。<code>sub</code> は命令の bit30 が <code>alu_op</code> の bit3 になって引き算。<code>lui</code> は <code>a_sel = ZERO</code> (0 + imm) です。",
+    ],
+    pipe: [
+      "同じ 9 命令をパイプライン版で。<code>li a0, 5</code> → <code>addi a0, a0, -1</code> のように直前の結果を使う命令も、フォワーディング (矢印) のおかげで止まらずに流れます。",
+      "最後の <code>ecall</code> の前では、先行する命令が全部 WB を抜けるまで ID で待つ (ドレイン) ので、バブルが 3 つ入ります。",
+    ],
+  },
+  loadstore: {
+    single: [
+      "<code>sw t1, 0(t0)</code>: ALU が <code>t0 + 0</code> を計算し、それがそのまま <code>d_addr</code> になります。LSU が書き込みストローブ <code>wstrb = 0f</code> (下位 4 バイト) を作り、② のエッジで RAM に書かれます。<code>reg_we = 0</code> なので書き戻しの線は灰色。",
+      "<code>lw a1, 0(t0)</code>: RAM が同じサイクルで 64 ビットのワード (<code>d_rdata</code>) を返し、LSU が下位 32 ビットを取り出して<b>符号拡張</b> (-2)。<code>wb_sel = MEM</code> で <code>load_val</code> が書き戻されます。",
+      "<code>sb t2, 9(t0)</code> はアドレスの下位 3 ビットが 1 なので <code>wstrb = 02</code>、<code>d_wdata</code> も 8 ビット左にずれます。続く <code>ld</code> で 0x…5566<b>41</b>88 と読めます。<code>lbu</code> は 0 拡張で 0xff。",
+    ],
+    pipe: [
+      "パイプライン版ではメモリアクセスは MEM ステージ。<code>la t0, buf</code> (auipc + addi) の結果は、すぐ後ろの命令にフォワーディングで渡ります。",
+      "<code>lw a1</code> の直後の命令は a1 を使わないので load-use の停止は起きません。",
+    ],
+  },
+  branch: {
+    single: [
+      "<code>beq t0, t1, .Lequal</code> (3 == 3): 分岐比較器 (branch_unit) が <code>br_taken = 1</code> を出し、<code>redirect = 1</code> で次の pc のマルチプレクサが ALU の結果 (飛び先 pc + imm) を選びます。",
+      "分岐では <code>a_sel = PC</code>、<code>b_sel = IMM</code> で ALU は<b>飛び先の計算</b>に使われ、比較は rs1 と rs2 を別の部品 (branch_unit) で行います。",
+      "2 つ目の <code>beq</code> (3 ≠ 4) は不成立: 飛び先は計算されますが使われず (灰色)、pc + 4 が選ばれます。",
+    ],
+    pipe: [
+      "分岐の結果は EX で分かります。成立したサイクル (<code>redirect = 1</code>) に IF と ID にいた 2 命令は間違って読んだもので、捨てられます (取り消し線)。成立 1 回につき 2 サイクルの損。",
+      "不成立の <code>beq</code> は「分岐しない」予測が当たったので損はありません。",
+    ],
+  },
+  call: {
+    single: [
+      "<code>jal ra, double</code>: ALU が飛び先 (pc + imm) を計算し、同時に wb mux が <code>pc + 4</code> を選んで ra に書きます (<code>wb_sel = PC4</code>)。1 サイクルに「ジャンプ」と「戻り番地の保存」を両方やっています。",
+      "<code>jalr zero, 0(ra)</code> (= <code>ret</code>): <code>a_sel = RS1</code> なので飛び先は ra + 0 (bit0 は 0 にする)。rd = zero なので書き込みは捨てられます。",
+    ],
+    pipe: [
+      "ジャンプも EX で飛び先が分かるので、jal・jalr のたびに後ろの 2 命令が捨てられます。9 命令なのにサイクル数が大きく増えるのはそのためです。",
+    ],
+  },
+  mmio: {
+    single: [
+      "<code>sb t2, 0(t0)</code> の t0 = 0x10000000。バスがアドレスの上位ビットを見て<b>コンソール</b>を選び (<code>con_valid = 1</code>)、② のエッジで <code>tx_data</code> に文字をラッチします。次のサイクルに <code>tx_valid = 1</code> になり、下のコンソールに文字が出ます。",
+      "<code>lbu t2, 0(t1)</code> は同じバスを通って RAM (<code>ram_valid = 1</code>) から読みます。CPU にとってはどちらもただのロード/ストアで、どこに届くかはバスのアドレスデコードだけで決まります (これが MMIO)。",
+    ],
+    pipe: [
+      "ループのたびに <code>lbu t2</code> → <code>beqz t2</code> の load-use でバブル 1 つ、<code>j .Lloop</code> で 2 命令の捨てが入ります。",
+    ],
+  },
+  stall: {
+    single: [
+      "RAM のデータポートの待ちサイクルを 2 にしてあります。<code>ld a1, 0(t0)</code> の間 <code>d_valid = 1</code> のまま <code>d_ready = 0</code> が 2 サイクル続き、<code>stall = 1</code> で pc も <code>rf_we</code> も止まります (同じ命令が 3 サイクル続く)。",
+      "RAM の中のカウンタ <code>ram_cnt</code> が 2 になると <code>d_ready = 1</code> で転送が成立し、そのエッジで a1 に書かれます。<code>sd</code> も同じく待ちます。コンソールへの <code>sb</code> は待ちなし。",
+      "波形で <code>d_valid</code> と <code>d_ready</code> を並べると、valid/ready のハンドシェイクが見えます。",
+    ],
+    pipe: [
+      "パイプライン版では MEM が <code>d_ready = 0</code> の間 IF〜MEM が止まり (<code>mem_stall</code>)、WB にバブルが入ります。",
+    ],
+  },
+  loaduse: {
+    single: [
+      "単一サイクル版にはハザードがありません。1 命令が 1 サイクルで完全に終わるので、次の命令は必ず書き込み済みのレジスタを読みます。パイプライン版に切り替えて比べてください。",
+    ],
+    pipe: [
+      "<code>ld t1</code> が EX にいるとき、ID の <code>addi t2, t1, 1</code> が t1 を使いたい。でも値は MEM でメモリを読むまで存在しません → <code>load_use = 1</code>。IF/ID を 1 サイクル止め、EX に<b>バブル</b> (空の点線のセル) を入れます。",
+      "次のサイクル、<code>ld</code> が WB に着いたところで MEM/WB から <code>addi</code> にフォワード (<code>fwd_a = 2</code>) されます。",
+      "2 つ目の <code>ld t3</code> は間に無関係な 1 命令があるので止まらず、<code>add t5, t3, t2</code> は MEM/WB からもらいます。",
+    ],
+  },
+  forward: {
+    single: [
+      "単一サイクル版ではフォワーディングは要りません (前の命令はもうレジスタに書き終わっている)。パイプライン版に切り替えて比べてください。",
+    ],
+    pipe: [
+      "<code>addi t1, t0, 1</code>: t0 は 1 つ前の命令の結果で、まだ EX/MEM レジスタにある → <code>fwd_a = 1</code> (MEM から EX への矢印)。",
+      "<code>addi t2, t0, 2</code>: 2 つ前の命令の結果 → MEM/WB から (<code>fwd_a = 2</code>)。<code>add t3, t1, t2</code> は両方の入力がフォワードです。",
+      "<code>nop</code> を 2 つ挟んだ <code>add t4, t3, t3</code> はレジスタファイルから読みます (ID で、同じサイクルの WB の書き込みを直接もらう)。",
+    ],
+  },
+  flush: {
+    single: [
+      "単一サイクル版では同じサイクルのうちに飛び先が決まるので、分岐で損はしません (その代わり 1 サイクルが長い)。",
+    ],
+    pipe: [
+      "<code>beq</code> が EX で成立と分かったサイクル (<code>redirect = 1</code>) に、IF と ID にいた <code>addi t0</code> と <code>addi t1</code> は間違って読んだ命令。次のエッジで捨てられ (取り消し線)、pc が飛び先に変わります。",
+      "捨てられた命令はレジスタに何も書きません。t0 = 1 のまま、<code>a0 = t0 - 1 = 0</code>。",
+    ],
+  },
+  loop: {
+    single: [
+      "1 + 2 + … + 10 = 55。ループ 10 回で 35 命令 = 35 サイクル (CPI = 1)。波形で <code>pc</code> がループの 3 命令を回っているのが見えます。",
+    ],
+    pipe: [
+      "<code>ble</code> が成立するたびに 2 命令が捨てられ、最後の <code>ecall</code> ではドレインが入るので CPI &gt; 1。",
+      "右の「比較」でパイプライン版のクロック周期を変えて、かかる時間を比べてみましょう。",
+    ],
+  },
+};
+
+// ---------------- 状態 ----------------
+let INDEX = [];
+const cache = {};
+let TR = null, OTHER = null;   // 表示中のトレース, もう一方のコアのトレース
+let demo = "arith", core = "single";
+let cyc = 0, phase = 0;        // phase: 0 = エッジ直前 (落ち着いた), 1 = エッジの後 (単一サイクル版だけ)
+let playing = false, timer = 0;
+let zoom = 34;
+let fieldHover = null;
+const waveSel = { single: ["clk", "pc", "inst", "b_sel", "alu_a", "alu_b", "alu_y", "rf_we", "rf_rd", "rf_wdata", "a0", "d_valid", "d_ready", "stall"],
+                  pipe: ["clk", "pc", "fd_inst", "de_inst", "em_inst", "mw_inst", "load_use", "id_stall", "redirect", "fwd_a", "fwd_b", "d_valid", "d_ready", "commit"] };
+try { const s = JSON.parse(localStorage.getItem("hw.waveSel") || "null"); if (s && s.single && s.pipe) Object.assign(waveSel, s); } catch (e) {}
+
+function showError(msg) { $("error").textContent = msg; $("loading").hidden = true; }
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ": HTTP " + r.status);
+  return r.json();
+}
+async function loadTrace(d, c) {
+  const k = d + "-" + c;
+  if (!cache[k]) {
+    const t = await fetchJSON("traces/" + k + ".json");
+    t.col = {};
+    t.sigs.forEach((s, i) => { t.col[s.n] = i; s.i = i; });
+    cache[k] = t;
+  }
+  return cache[k];
+}
+
+// ---------------- 値の扱い ----------------
+const big = (h) => (h === "x" || h == null) ? null : BigInt("0x" + h);
+const sx = (v, w) => (v >= (1n << BigInt(w - 1)) ? v - (1n << BigInt(w)) : v);
+function G(c, n) { const i = TR.col[n]; return i === undefined ? "x" : TR.V(c)[i]; }
+function fmt(h, w = 64) {             // 短い表示: 小さい値は符号付き 10 進、大きい値は 16 進
+  if (h === "x") return "x";
+  if (w === 1) return h;
+  const v = big(h), s = w === 64 ? sx(v, w) : v;   // 64 ビットの値だけ符号付きで読む
+  if (s > -100000n && s < 100000n) return s.toString();
+  return "0x" + h;
+}
+const hx = (h) => (h === "x" ? "x" : "0x" + h);
+const regName = (h) => { const n = parseInt(h, 16); return isNaN(n) ? h : ABI[n]; };
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function regsBefore(c) { return c <= 0 ? TR.init : TR.regs[c - 1]; }
+function regsAt(c, ph) { return ph ? TR.regs[c] : regsBefore(c); }
+function chr(b) { return b >= 32 && b < 127 ? "'" + String.fromCharCode(b) + "'" : b === 10 ? "'\\n'" : "0x" + b.toString(16); }
+
+// ---------------- SVG ヘルパ ----------------
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+// =====================================================================
+// データパス (単一サイクル版)。座標は hw/README.md の図を元に手で並べたもの
+// =====================================================================
+const UNITS = [
+  { id: "npc", kind: "muxh", x: 20, y: 150, w: 80, h: 25 },
+  { id: "pcreg", kind: "reg", x: 30, y: 225, w: 60, h: 70, t: "pc", ty: 248 },
+  { id: "add4", kind: "box", x: 160, y: 95, w: 50, h: 40, t: "+4", ty: 120 },
+  { id: "gate", kind: "box", x: 128, y: 150, w: 72, h: 22 },
+  { id: "imem", kind: "box", x: 160, y: 215, w: 100, h: 90, t: "命令メモリ", s: "RAM 命令ポート", ty: 240 },
+  { id: "dec", kind: "box", x: 320, y: 40, w: 150, h: 90, t: "デコーダ", s: "decoder.v", ty: 64 },
+  { id: "immg", kind: "box", x: 320, y: 425, w: 120, h: 55, t: "即値生成", s: "immgen.v", ty: 443 },
+  { id: "rf", kind: "reg", x: 480, y: 210, w: 140, h: 170, t: "レジスタファイル", s: "x0..x31  regfile.v", ty: 255 },
+  { id: "amux", kind: "muxv", x: 690, y: 180, w: 25, h: 85 },
+  { id: "bmux", kind: "muxv", x: 690, y: 290, w: 25, h: 95 },
+  { id: "alu", kind: "alu", x: 760, y: 190, w: 70, h: 180 },
+  { id: "br", kind: "box", x: 700, y: 470, w: 95, h: 60, t: "分岐比較", s: "branch_unit", ty: 490 },
+  { id: "lsu", kind: "box", x: 900, y: 250, w: 90, h: 170, t: "LSU", s: "lsu.v", ty: 330 },
+  { id: "bus", kind: "box", x: 1040, y: 250, w: 50, h: 170, t: "バス", s: "bus.v", ty: 330 },
+  { id: "ram", kind: "reg", x: 1130, y: 230, w: 140, h: 90, t: "RAM", s: "データポート", ty: 250 },
+  { id: "con", kind: "reg", x: 1130, y: 350, w: 140, h: 80, t: "コンソール", s: "MMIO", ty: 370 },
+  { id: "wbmux", kind: "muxv", x: 1000, y: 470, w: 25, h: 120 },
+];
+// ワイヤ: pts (折れ線), lab [x, y, anchor] (値のラベル), f (命令のフィールド: ホバーで光る), ctrl (制御信号の点線)
+const WIRES = [
+  { id: "pc_imem", pts: [[90, 260], [160, 260]], lab: [125, 252, "middle"], f: [] },
+  { id: "pc_add", pts: [[120, 260], [120, 115], [160, 115]], dot: [120, 260] },
+  { id: "pc_amux", pts: [[120, 195], [690, 195]], dot: [120, 195], lab: [400, 190, "middle"] },
+  { id: "pc4_npc", pts: [[210, 115], [230, 115], [230, 72], [40, 72], [40, 150]], lab: [135, 66, "middle"] },
+  { id: "pc4_wb", pts: [[40, 72], [12, 72], [12, 624], [980, 624], [980, 550], [1000, 550]], dot: [40, 72], lab: [560, 619, "middle"] },
+  { id: "npc_pc", pts: [[60, 175], [60, 225]], lab: [64, 212, "start"] },
+  { id: "target", pts: [[860, 280], [860, 24], [80, 24], [80, 150]], dot: [860, 280], lab: [470, 19, "middle"] },
+  { id: "gate_npc", pts: [[128, 161], [100, 161]], ctrl: true },
+  { id: "br_gate", pts: [[795, 500], [815, 500], [815, 560], [150, 560], [150, 172]], lab: [480, 555, "middle"] },
+  { id: "inst_dec", pts: [[260, 260], [290, 260], [290, 85], [320, 85]], lab: [298, 183, "start"], f: ["opcode", "funct3", "funct7"] },
+  { id: "f_rs1", pts: [[290, 225], [480, 225]], dot: [290, 225], lab: [385, 220, "middle"], f: ["rs1"] },
+  { id: "f_rs2", pts: [[290, 275], [480, 275]], dot: [290, 275], lab: [385, 270, "middle"], f: ["rs2"] },
+  { id: "f_rd", pts: [[290, 330], [480, 330]], dot: [290, 330], lab: [385, 325, "middle"], f: ["rd"] },
+  { id: "inst_imm", pts: [[290, 260], [290, 452], [320, 452]], dot: [290, 260], f: ["imm"] },
+  { id: "imm_bmux", pts: [[440, 452], [665, 452], [665, 360], [690, 360]], lab: [552, 447, "middle"], f: ["imm"] },
+  { id: "rs1_amux", pts: [[620, 225], [690, 225]], lab: [655, 220, "middle"], f: ["rs1"] },
+  { id: "rs1_br", pts: [[650, 225], [650, 485], [700, 485]], dot: [650, 225], f: ["rs1"] },
+  { id: "rs2_bmux", pts: [[620, 305], [690, 305]], lab: [655, 300, "middle"], f: ["rs2"] },
+  { id: "rs2_br", pts: [[640, 305], [640, 515], [700, 515]], dot: [640, 305], f: ["rs2"] },
+  { id: "rs2_lsu", pts: [[640, 400], [900, 400]], dot: [640, 400], lab: [770, 395, "middle"], f: ["rs2"] },
+  { id: "zero_amux", pts: [[672, 250], [690, 250]], lab: [668, 254, "end"] },
+  { id: "amux_alu", pts: [[715, 222], [760, 222]], lab: [737, 214, "middle"] },
+  { id: "bmux_alu", pts: [[715, 337], [760, 337]], lab: [737, 329, "middle"] },
+  { id: "alu_out", pts: [[830, 280], [860, 280]], lab: [864, 272, "start"] },
+  { id: "y_lsu", pts: [[860, 280], [900, 280]] },
+  { id: "y_wb", pts: [[860, 280], [860, 490], [1000, 490]], lab: [930, 485, "middle"] },
+  { id: "lsu_bus", pts: [[990, 300], [1040, 300]], lab: [1015, 293, "middle"] },
+  { id: "bus_lsu", pts: [[1040, 360], [990, 360]], lab: [1015, 353, "middle"] },
+  { id: "bus_ram", pts: [[1090, 275], [1130, 275]], lab: [1110, 268, "middle"] },
+  { id: "bus_con", pts: [[1090, 390], [1130, 390]], lab: [1110, 383, "middle"] },
+  { id: "con_tx", pts: [[1200, 430], [1200, 462]], lab: [1200, 478, "middle"] },
+  { id: "load_wb", pts: [[945, 420], [945, 520], [1000, 520]], lab: [950, 450, "start"] },
+  { id: "sys_wb", pts: [[945, 575], [1000, 575]], lab: [940, 579, "end"] },
+  { id: "wb_rf", pts: [[1025, 530], [1045, 530], [1045, 600], [460, 600], [460, 360], [480, 360]], lab: [750, 595, "middle"] },
+  // 制御信号 (デコーダから)
+  { id: "c_stub", pts: [[395, 130], [395, 140]], ctrl: true, noarrow: true, f: ["opcode", "funct3", "funct7"] },
+  { id: "c_rail", pts: [[170, 140], [1012, 140]], ctrl: true, noarrow: true, f: ["opcode", "funct3", "funct7"] },
+  { id: "c_gate", pts: [[170, 140], [170, 150]], ctrl: true, lab: [204, 186, "start"] },
+  { id: "c_rf", pts: [[550, 140], [550, 210]], ctrl: true, lab: [554, 168, "start"] },
+  { id: "c_amux", pts: [[702, 140], [702, 183]], ctrl: true, lab: [706, 160, "start"] },
+  { id: "c_alu", pts: [[795, 140], [795, 207]], ctrl: true, lab: [799, 172, "start"] },
+  { id: "c_lsu", pts: [[945, 140], [945, 250]], ctrl: true, lab: [949, 190, "start"] },
+  { id: "c_lsu2", pts: [], ctrl: true, lab: [949, 205, "start"] },
+  { id: "c_wb", pts: [[1012, 140], [1012, 474]], ctrl: true, lab: [1016, 458, "start"] },
+  { id: "c_bmux", pts: [], ctrl: true, lab: [684, 278, "end"] },
+];
+const MUXIN = {   // マルチプレクサの入力の y 座標 (選ばれた入力から出力へ線を引く)
+  amux: { out: 222, ins: { 1: 195, 0: 225, 2: 250 } },
+  bmux: { out: 337, ins: { 0: 305, 1: 360 } },
+  wbmux: { out: 530, ins: { 0: 490, 1: 520, 2: 550, 3: 575 } },
+};
+const DP = { units: {}, wires: {} };
+
+function buildDatapath() {
+  const svg = $("dp");
+  svg.textContent = "";
+  const gw = el("g", {}, svg), gu = el("g", {}, svg), gl = el("g", {}, svg);
+  for (const u of UNITS) {
+    const g = el("g", { class: "u", "data-u": u.id }, gu);
+    const { x, y, w, h } = u;
+    if (u.kind === "muxv") {
+      const i = Math.min(14, h * 0.18);
+      el("polygon", { points: `${x},${y} ${x + w},${y + i} ${x + w},${y + h - i} ${x},${y + h}` }, g);
+    } else if (u.kind === "muxh") {
+      el("polygon", { points: `${x},${y} ${x + w},${y} ${x + w - 14},${y + h} ${x + 14},${y + h}` }, g);
+    } else if (u.kind === "alu") {
+      el("polygon", { points: `${x},${y} ${x + w},${y + 35} ${x + w},${y + h - 35} ${x},${y + h} ${x},${y + h / 2 + 16} ${x + 16},${y + h / 2} ${x},${y + h / 2 - 16}` }, g);
+      el("text", { class: "t", x: x + w / 2 + 6, y: y + h / 2 - 22 }, g, "ALU");
+    } else {
+      el("rect", { x, y, width: w, height: h, rx: 5 }, g);
+    }
+    if (u.kind === "reg") el("polyline", { class: "clkmark", points: `${x + w / 2 - 8},${y + h} ${x + w / 2},${y + h - 9} ${x + w / 2 + 8},${y + h}` }, g);
+    if (u.t) el("text", { class: "t", x: x + w / 2, y: u.ty }, g, u.t);
+    if (u.s) el("text", { class: "s", x: x + w / 2, y: u.ty + 14 }, g, u.s);
+    u.g = g;
+    u.d = [];
+    DP.units[u.id] = u;
+  }
+  // 部品の中の動的な文字 (位置は部品ごと)
+  const D = (id, x, y) => { const u = DP.units[id]; const t = el("text", { class: "d", x, y }, u.g); u.d.push(t); return t; };
+  D("pcreg", 60, 272);
+  D("imem", 210, 278); D("imem", 210, 294);
+  D("dec", 395, 98); D("dec", 395, 116);
+  D("immg", 380, 472);
+  D("rf", 550, 292); D("rf", 550, 310); D("rf", 550, 340); D("rf", 550, 356);
+  D("alu", 802, 290);
+  D("br", 747, 520);
+  D("lsu", 945, 362); D("lsu", 945, 378);
+  D("bus", 1065, 368);
+  D("ram", 1200, 284); D("ram", 1200, 300);
+  D("con", 1200, 404); D("con", 1200, 420);
+  D("gate", 164, 166);
+  D("npc", 60, 167);
+  // 部品の中の入力名 (小さく)
+  const mi = (x, y, s, a = "end") => el("text", { class: "mux-in", x, y, "text-anchor": a }, gu, s);
+  mi(612, 229, "rs1_val"); mi(612, 309, "rs2_val"); mi(488, 229, "rs1", "start"); mi(488, 279, "rs2", "start");
+  mi(488, 334, "rd", "start"); mi(488, 364, "wdata", "start");
+  mi(908, 284, "addr", "start"); mi(908, 404, "store", "start"); mi(982, 304, "→bus"); mi(982, 364, "←rdata");
+
+  for (const w of WIRES) {
+    const g = el("g", { "data-w": w.id }, gw);
+    w.els = [];
+    if (w.pts.length) {
+      const pl = el("polyline", { class: "w" + (w.ctrl ? " ctrl" : ""), points: w.pts.map((p) => p.join(",")).join(" ") }, g);
+      w.els.push(pl);
+      if (!w.noarrow) {
+        const [x1, y1] = w.pts[w.pts.length - 2], [x2, y2] = w.pts[w.pts.length - 1];
+        const a = Math.atan2(y2 - y1, x2 - x1), L = w.ctrl ? 6 : 8, W2 = w.ctrl ? 3.5 : 4.5;
+        const p = (dx, dy) => `${x2 + dx * Math.cos(a) - dy * Math.sin(a)},${y2 + dx * Math.sin(a) + dy * Math.cos(a)}`;
+        w.els.push(el("polygon", { class: "wa" + (w.ctrl ? " ctrl" : ""), points: `${p(0, 0)} ${p(-L, -W2)} ${p(-L, W2)}` }, g));
+      }
+      if (w.dot) w.els.push(el("circle", { class: "jd", cx: w.dot[0], cy: w.dot[1], r: 3.5 }, g));
+    }
+    if (w.lab) w.lt = el("text", { class: "wl" + (w.ctrl ? " ctrl" : ""), x: w.lab[0], y: w.lab[1], "text-anchor": w.lab[2] }, gl);
+    DP.wires[w.id] = w;
+  }
+  // マルチプレクサの「スイッチ」
+  for (const id in MUXIN) DP.units[id].sw = el("line", { class: "msel" }, DP.units[id].g);
+  // 次の pc の mux: 横向き (入力は上)
+  DP.units.npc.sw = el("line", { class: "msel" }, DP.units.npc.g);
+}
+
+function setWire(id, on, label) {
+  const w = DP.wires[id];
+  for (const e of w.els) e.classList.toggle("on", !!on);
+  if (w.lt) { w.lt.textContent = label == null ? "" : label; w.lt.classList.toggle("on", !!on); }
+}
+function setUnit(id, on, lines = [], edge = false, hot = false) {
+  const u = DP.units[id];
+  u.g.classList.toggle("on", !!on);
+  u.g.classList.toggle("edge", !!edge);
+  u.d.forEach((t, i) => { t.textContent = lines[i] || ""; t.classList.toggle("hot", !!hot && i === 0); });
+}
+
+function renderDatapath() {
+  const c = cyc, g = (n) => G(c, n), B = (n) => g(n) === "1", N = (n) => parseInt(g(n), 16);
+  const inst = big(g("inst")) ?? 0n, op = Number(inst & 0x7fn), f3 = N("funct3");
+  const regWe = B("reg_we"), aSel = N("a_sel"), bSel = N("b_sel"), wbSel = N("wb_sel");
+  const mr = B("mem_read"), mw = B("mem_write"), br = B("branch"), jp = B("jump"), ec = B("ecall"), md = B("is_muldiv");
+  const redirect = B("redirect"), taken = B("br_taken"), stall = B("stall"), rfWe = B("rf_we");
+  const dValid = B("d_valid"), dReady = B("d_ready"), dWe = B("d_we");
+  const usesRs1 = br || mr || mw || (aSel === 0 && !ec && (regWe || jp));
+  const usesRs2 = br || mw || (bSel === 0 && regWe && !ec && wbSel === 0);
+  const usesImm = bSel === 1;
+  const aluUsed = (regWe && wbSel === 0 && !ec) || mr || mw || jp || br;
+  const edge = phase === 1;
+  const rd = N("rf_rd"), wdata = g("rf_wdata");
+  const before = regsBefore(c);
+
+  // ---- 線 ----
+  setWire("pc_imem", true, "pc=" + hx(g("pc")));
+  setWire("pc_add", true);
+  setWire("pc_amux", aluUsed && aSel === 1, "pc");
+  setWire("pc4_npc", !redirect, "pc+4=" + hx(g("pc_plus4")));
+  setWire("pc4_wb", regWe && wbSel === 2, wbSel === 2 && regWe ? "pc+4 (戻り番地)" : "pc+4");
+  setWire("npc_pc", true, hx(g("next_pc")));
+  setWire("target", jp || br, (redirect ? "飛び先 " : (br ? "飛び先 (不成立で使わない) " : "alu_y ")) + hx(g("alu_y")));
+  setWire("gate_npc", redirect);
+  setWire("br_gate", br, "br_taken=" + g("br_taken"));
+  setWire("inst_dec", true, "inst=" + g("inst").padStart(8, "0"));
+  setWire("f_rs1", usesRs1, "rs1=" + regName(g("rs1")));
+  setWire("f_rs2", usesRs2, "rs2=" + regName(g("rs2")));
+  setWire("f_rd", regWe, "rd=" + regName(g("rd")));
+  setWire("inst_imm", usesImm);
+  setWire("imm_bmux", usesImm, "imm=" + fmt(g("imm")));
+  setWire("rs1_amux", usesRs1 && aSel === 0 && !br, fmt(g("rs1_val")));
+  setWire("rs1_br", br);
+  setWire("rs2_bmux", usesRs2 && bSel === 0, fmt(g("rs2_val")));
+  setWire("rs2_br", br);
+  setWire("rs2_lsu", mw, "store=" + fmt(g("rs2_val")));
+  setWire("zero_amux", aluUsed && aSel === 2, "0");
+  setWire("amux_alu", aluUsed, fmt(g("alu_a")));
+  setWire("bmux_alu", aluUsed, fmt(g("alu_b")));
+  setWire("alu_out", aluUsed, fmt(g("alu_y")));
+  setWire("y_lsu", mr || mw);
+  setWire("y_wb", regWe && wbSel === 0 && !ec, "ex_y=" + fmt(g("ex_y")));
+  setWire("lsu_bus", dValid, dValid ? hx(g("d_addr")) : "");
+  setWire("bus_lsu", dValid && !dWe && dReady, dValid && !dWe ? (dReady ? hx(g("d_rdata")) : "待ち") : "");
+  setWire("bus_ram", B("ram_valid"), B("ram_valid") ? "ready=" + g("d_ready") : "");
+  setWire("bus_con", B("con_valid"), B("con_valid") ? "ready=1" : "");
+  setWire("con_tx", B("tx_valid"), B("tx_valid") ? "tx " + chr(N("tx_data")) : "");
+  setWire("load_wb", mr, mr ? "load_val=" + fmt(g("load_val")) : "");
+  setWire("sys_wb", ec && rfWe, "sys_ret (OS)");
+  setWire("wb_rf", rfWe, "rf_wdata=" + fmt(wdata) + (rfWe ? "" : stall ? " (stall で書かない)" : ""));
+  // 制御
+  setWire("c_stub", true); setWire("c_rail", true);
+  setWire("c_gate", br || jp, `jump=${g("jump")} br=${g("branch")}`);
+  setWire("c_rf", regWe, `reg_we=${g("reg_we")}`);
+  setWire("c_amux", aluUsed, `a_sel=${A_SEL[aSel]}`);
+  setWire("c_alu", aluUsed, `alu_op=${ALU_OP[N("alu_op")] || g("alu_op")}`);
+  setWire("c_lsu", mr || mw, `mem_read=${g("mem_read")}`);
+  setWire("c_lsu2", mr || mw, `mem_write=${g("mem_write")}`);
+  setWire("c_wb", regWe, `wb_sel=${WB_SEL[wbSel]}`);
+  setWire("c_bmux", aluUsed, `b_sel=${B_SEL[bSel]}`);
+
+  // ---- 部品 ----
+  const nextPc = stall ? g("pc") : g("next_pc");
+  setUnit("pcreg", true, [edge ? hx(nextPc) : hx(g("pc"))], edge, edge);
+  setUnit("add4", true);
+  setUnit("gate", br || jp, ["redirect=" + g("redirect")]);
+  setUnit("npc", true, [redirect ? "▲ 飛び先" : "▲ pc+4"]);
+  setUnit("imem", true, [g("inst").padStart(8, "0"), ""]);
+  setUnit("dec", true, [OPC[op] || "?", `funct3=${f3}`]);
+  setUnit("immg", usesImm, [`${IMM_SEL[N("imm_sel")]} 形式`]);
+  const rfLines = [];
+  rfLines.push(usesRs1 ? `${regName(g("rs1"))} → ${fmt(g("rs1_val"))}` : "");
+  rfLines.push(usesRs2 ? `${regName(g("rs2"))} → ${fmt(g("rs2_val"))}` : "");
+  if (rfWe && rd !== 0) {
+    rfLines.push(edge ? `${ABI[rd]} ← ${fmt(wdata)}` : `${ABI[rd]}: ${fmt(before[rd])}`);
+    rfLines.push(edge ? "書き込んだ" : `→ ${fmt(wdata)} (エッジで)`);
+  }
+  setUnit("rf", usesRs1 || usesRs2 || regWe, rfLines, edge && rfWe && rd !== 0, edge && rfWe && rd !== 0);
+  setUnit("amux", aluUsed); setUnit("bmux", aluUsed); setUnit("wbmux", regWe);
+  setUnit("alu", aluUsed, [aluUsed ? (md ? "(muldiv)" : ALU_OP[N("alu_op")] || "?") + (B("is_word") ? "W" : "") : ""]);
+  setUnit("br", br, [br ? (taken ? "成立 (taken)" : "不成立") : ""]);
+  const size = 1 << (f3 & 3);
+  setUnit("lsu", dValid, dValid ? [(mr ? LOADN[f3] : STOREN[f3 & 3]) + ` ${size}B`, mw ? `wstrb=${g("d_wstrb").padStart(2, "0")}` : ""] : []);
+  setUnit("bus", dValid, [dValid ? (B("ram_valid") ? "→RAM" : B("con_valid") ? "→CON" : "→?") : ""]);
+  const ramWrite = B("ram_valid") && dWe && dReady;
+  let ramL = [];
+  if (B("ram_valid")) {
+    ramL = [(dWe ? "write " : "read ") + hx(g("d_addr")), dReady ? (dWe ? (edge ? "書き込んだ" : "エッジで書く") : "ready=1") : `ready=0 (待ち ${N("ram_cnt")}/${TR.wait})`];
+  }
+  setUnit("ram", B("ram_valid"), ramL, edge && ramWrite, edge && ramWrite);
+  const conWrite = B("con_valid") && dWe;
+  const conL = conWrite ? [`THR ← ${chr(Number(big(g("d_wdata")) & 0xffn))}`, edge ? "tx_data にラッチ" : "エッジでラッチ"] : B("tx_valid") ? [`送信 ${chr(N("tx_data"))}`, ""] : [];
+  setUnit("con", B("con_valid") || B("tx_valid"), conL, edge && conWrite, edge && conWrite);
+
+  // ---- マルチプレクサのスイッチ ----
+  const swv = (id, sel, on) => {
+    const u = DP.units[id], m = MUXIN[id], yi = m.ins[sel];
+    if (yi == null || !on) { u.sw.setAttribute("visibility", "hidden"); return; }
+    u.sw.setAttribute("visibility", "visible");
+    u.sw.setAttribute("x1", u.x + 2); u.sw.setAttribute("y1", yi); u.sw.setAttribute("x2", u.x + u.w - 2); u.sw.setAttribute("y2", m.out);
+  };
+  swv("amux", aSel, aluUsed); swv("bmux", bSel, aluUsed); swv("wbmux", wbSel, regWe);
+  const n = DP.units.npc.sw, xi = redirect ? 80 : 40;
+  n.setAttribute("x1", xi); n.setAttribute("y1", 152); n.setAttribute("x2", 60); n.setAttribute("y2", 173);
+  applyFieldHover();
+}
+
+// ---------------- 命令のビット ----------------
+function fieldsOf(w) {
+  const op = w & 0x7f;
+  const F = (k, hi, lo, name) => ({ k, hi, lo, name: name || k });
+  const R = [F("funct7", 31, 25), F("rs2", 24, 20), F("rs1", 19, 15), F("funct3", 14, 12), F("rd", 11, 7), F("opcode", 6, 0)];
+  const I = [F("imm", 31, 20, "imm[11:0]"), F("rs1", 19, 15), F("funct3", 14, 12), F("rd", 11, 7), F("opcode", 6, 0)];
+  const S = [F("imm", 31, 25, "imm[11:5]"), F("rs2", 24, 20), F("rs1", 19, 15), F("funct3", 14, 12), F("imm", 11, 7, "imm[4:0]"), F("opcode", 6, 0)];
+  const Bf = [F("imm", 31, 25, "imm[12|10:5]"), F("rs2", 24, 20), F("rs1", 19, 15), F("funct3", 14, 12), F("imm", 11, 7, "imm[4:1|11]"), F("opcode", 6, 0)];
+  const U = [F("imm", 31, 12, "imm[31:12]"), F("rd", 11, 7), F("opcode", 6, 0)];
+  const J = [F("imm", 31, 12, "imm[20|10:1|11|19:12]"), F("rd", 11, 7), F("opcode", 6, 0)];
+  if (op === 0x33 || op === 0x3b) return ["R", R];
+  if (op === 0x23) return ["S", S];
+  if (op === 0x63) return ["B", Bf];
+  if (op === 0x37 || op === 0x17) return ["U", U];
+  if (op === 0x6f) return ["J", J];
+  return ["I", I];
+}
+const FIELD_DESC = {
+  opcode: "opcode → デコーダ (命令の大分類。制御信号はここから決まる)",
+  rd: "rd → レジスタファイルの書き込み番地",
+  rs1: "rs1 → レジスタファイルの読み出し番地 1",
+  rs2: "rs2 → レジスタファイルの読み出し番地 2",
+  funct3: "funct3 → デコーダ (演算の種類)、LSU (サイズ)、分岐比較器 (条件)",
+  funct7: "funct7 → デコーダ (bit30 は sub / sra、funct7=1 は M 拡張)",
+  imm: "即値 → 即値生成器で並べ替えて符号拡張 → ALU の B 入力",
+};
+function renderBits(word) {
+  const box = $("bits");
+  box.textContent = "";
+  const [fmtName, fs] = fieldsOf(word);
+  const kOf = (bit) => fs.find((f) => bit <= f.hi && bit >= f.lo);
+  for (let b = 31; b >= 0; b--) { const d = document.createElement("div"); d.className = "idx"; d.textContent = b; box.appendChild(d); }
+  for (let b = 31; b >= 0; b--) {
+    const f = kOf(b), d = document.createElement("div");
+    d.className = "b k-" + f.k + (b === f.hi ? " first" : "");
+    d.textContent = (word >>> b) & 1;
+    d.dataset.k = f.k;
+    box.appendChild(d);
+  }
+  for (const f of fs) {
+    const span = f.hi - f.lo + 1;
+    const d = document.createElement("div");
+    d.className = "f first k-" + f.k;
+    d.style.gridColumn = `span ${span}`;
+    d.textContent = f.name;
+    d.title = f.name;
+    d.dataset.k = f.k;
+    box.appendChild(d);
+  }
+  for (const f of fs) {
+    const span = f.hi - f.lo + 1, v = (word >>> f.lo) & ((1 << span) - 1);
+    const e = document.createElement("div");
+    e.className = "fv";
+    e.style.gridColumn = `span ${span}`;
+    e.textContent = (f.k === "rd" || f.k === "rs1" || f.k === "rs2") ? ABI[v] : f.k === "imm" ? "" : "0x" + v.toString(16);
+    box.appendChild(e);
+  }
+  const pcv = curPc();
+  $("fieldinfo").innerHTML = `<b>${fmtName} 形式</b> <code>${word.toString(16).padStart(8, "0")}</code> = <code>${esc(TR.dis[pcv] || "")}</code>` +
+    (fieldHover ? `<br><span style="color:var(--muted)">${esc(FIELD_DESC[fieldHover])}</span>` : `<br><span class="muted">フィールドにマウスを乗せる (タップする) と、データパスの対応する線が光ります。</span>`);
+  box.querySelectorAll("[data-k]").forEach((d) => {
+    d.addEventListener("mouseenter", () => setFieldHover(d.dataset.k));
+    d.addEventListener("mouseleave", () => setFieldHover(null));
+    d.addEventListener("click", () => setFieldHover(fieldHover === d.dataset.k ? null : d.dataset.k));
+  });
+  box.querySelectorAll("[data-k]").forEach((d) => d.classList.toggle("hov", d.dataset.k === fieldHover));
+}
+const FIELD_UNITS = { opcode: ["dec"], funct3: ["dec", "lsu", "br"], funct7: ["dec"], rs1: ["rf"], rs2: ["rf"], rd: ["rf"], imm: ["immg"] };
+const FIELD_EXTRA = { rd: ["wb_rf"], rs1: [], rs2: [], imm: ["bmux_alu"] };
+function setFieldHover(k) {
+  if (fieldHover === k) return;
+  fieldHover = k;
+  if (TR && core === "single") renderBits(Number(big(G(cyc, "inst")) ?? 0n));
+  applyFieldHover();
+}
+function applyFieldHover() {
+  const svg = $("dp");
+  svg.querySelectorAll(".fhl").forEach((e) => e.classList.remove("fhl"));
+  if (!fieldHover) return;
+  svg.style.setProperty("--fc", `var(--${{ opcode: "c1", rd: "c2", funct3: "c3", rs1: "c4", rs2: "c6", imm: "c5", funct7: "muted" }[fieldHover]})`);
+  for (const w of WIRES) {
+    if ((w.f || []).includes(fieldHover) || (FIELD_EXTRA[fieldHover] || []).includes(w.id)) {
+      w.els.forEach((e) => e.classList.add("fhl"));
+      if (w.lt) w.lt.classList.add("fhl");
+    }
+  }
+  for (const id of FIELD_UNITS[fieldHover] || []) DP.units[id].g.classList.add("fhl");
+}
+
+// ---------------- 制御信号の表 ----------------
+const CTRL_ROWS = [
+  ["reg_we", "rd に書き戻す", (v) => v],
+  ["a_sel", "ALU 入力 A: rs1 / pc / 0", (v) => `${v} (${A_SEL[parseInt(v, 16)]})`],
+  ["b_sel", "ALU 入力 B: rs2 / 即値", (v) => `${v} (${B_SEL[parseInt(v, 16)]})`],
+  ["alu_op", "ALU の演算 ({bit30, funct3})", (v) => `${parseInt(v, 16).toString(2).padStart(4, "0")} (${ALU_OP[parseInt(v, 16)] || "?"})`],
+  ["imm_sel", "即値の形式 I/S/B/U/J", (v) => `${v} (${IMM_SEL[parseInt(v, 16)]})`],
+  ["wb_sel", "書き戻す値: ALU / メモリ / pc+4 / syscall", (v) => `${v} (${WB_SEL[parseInt(v, 16)]})`],
+  ["is_word", "*W 命令 (32 ビットで計算して符号拡張)", (v) => v],
+  ["is_muldiv", "M 拡張 (乗除算器の結果を使う)", (v) => v],
+  ["mem_read", "ロード", (v) => v],
+  ["mem_write", "ストア", (v) => v],
+  ["branch", "条件分岐 (成立かは branch_unit が決める)", (v) => v],
+  ["jump", "jal / jalr (無条件ジャンプ)", (v) => v],
+  ["jalr", "飛び先の bit0 を 0 にする", (v) => v],
+  ["ecall", "システムコール (テストベンチ = OS に頼む)", (v) => v],
+  ["illegal", "知らない命令", (v) => v],
+  [null, "↓ デコーダの外で決まる信号", null],
+  ["br_taken", "分岐条件が成り立った (branch_unit)", (v) => v],
+  ["redirect", "次の pc = 飛び先 (jump | branch & taken)", (v) => v],
+  ["d_valid", "データバスにアクセスを出している", (v) => v],
+  ["d_ready", "バスの応答 (読み出しデータ有効 / 書き込み完了)", (v) => v],
+  ["stall", "止まる: バスの応答待ち / ecall の処理待ち", (v) => v],
+  ["rf_we", "このサイクルの終わりのエッジで rd に書く", (v) => v],
+];
+function renderCtrl() {
+  const c = cyc, rows = [];
+  for (const [n, desc, f] of CTRL_ROWS) {
+    if (!n) { rows.push(`<tr><th colspan="3">${esc(desc)}</th></tr>`); continue; }
+    const v = G(c, n), pv = c > 0 ? G(c - 1, n) : v;
+    const off = v === "0";
+    rows.push(`<tr class="${off ? "off" : ""}"><td class="nm">${n}</td><td class="v${v !== pv ? " changed" : ""}">${esc(f(v))}</td><td class="desc">${esc(desc)}</td></tr>`);
+  }
+  $("ctrl").innerHTML = rows.join("");
+}
+
+// ---------------- レジスタ・コンソール・ソース ----------------
+function renderRegs() {
+  let cur, prev, pend = -1, pendVal = "";
+  if (core === "single") {
+    cur = regsAt(cyc, phase);
+    prev = phase ? regsBefore(cyc) : (cyc > 0 ? regsBefore(cyc - 1) : TR.init);
+    if (!phase && G(cyc, "rf_we") === "1") { pend = parseInt(G(cyc, "rf_rd"), 16); pendVal = G(cyc, "rf_wdata"); }
+    $("regsTitle").textContent = phase ? "レジスタ (エッジの後)" : "レジスタ (エッジの前)";
+  } else {
+    cur = regsBefore(cyc); prev = cyc > 0 ? regsBefore(cyc - 1) : TR.init;
+    if (G(cyc, "rf_we") === "1") { pend = parseInt(G(cyc, "rf_rd"), 16); pendVal = G(cyc, "rf_wdata"); }
+    $("regsTitle").textContent = "レジスタ (このサイクルの間)";
+  }
+  const out = [];
+  for (let i = 0; i < 32; i++) {
+    const ch = cur[i] !== prev[i];
+    const p = i === pend && i !== 0;
+    out.push(`<div class="${ch ? "changed" : ""}${p ? " pend" : ""}" title="x${i}${p ? " ← " + fmt(pendVal) + " (エッジで書く)" : ""}"><span class="rn">${ABI[i]}</span><span>${fmt(cur[i])}</span></div>`);
+  }
+  $("regs").innerHTML = out.join("");
+  let s = "";
+  for (let c = 0; c <= cyc; c++) if (G(c, "tx_valid") === "1") s += String.fromCharCode(parseInt(G(c, "tx_data"), 16));
+  $("console").textContent = s;
+}
+function buildSource() {
+  const lines = TR.source.replace(/\n$/, "").split("\n");
+  const byLine = {};
+  for (const l of TR.listing) if (l.k === "inst") (byLine[l.l] = byLine[l.l] || []).push(l);
+  const html = lines.map((src, i) => {
+    const ls = byLine[i + 1] || [];
+    const ad = ls.length ? ls[0].a : "";
+    const cm = /^\s*(#|$)/.test(src);
+    return `<div class="ln${cm ? " cmt" : ""}" data-line="${i + 1}" data-addrs="${ls.map((l) => l.a).join(" ")}"><span class="no">${i + 1}</span><span class="tags"></span><span class="ad">${ad}</span><span class="src">${esc(src)}</span></div>`;
+  });
+  $("src").innerHTML = html.join("");
+  $("srcTitle").textContent = "ソース: hw/" + TR.file;
+  $("src").querySelectorAll(".ln").forEach((d) => d.addEventListener("click", () => {
+    const addrs = d.dataset.addrs.split(" ").filter(Boolean);
+    if (!addrs.length) return;
+    // その命令が (単一サイクル: 実行される / パイプライン: EX にいる) 次のサイクルへ
+    const n = TR.cycles;
+    for (let k = 1; k <= n; k++) {
+      const c = (cyc + k) % n;
+      const pc = core === "single" ? G(c, "pc") : pipePcAt(c, 2);
+      if (addrs.includes(pc)) { go(c, 0); return; }
+    }
+  }));
+}
+function pipePcAt(c, s) { const id = TR.pipe.st[c][s]; return id >= 0 ? TR.pipe.insts[id].pc : null; }
+const STAGES = ["IF", "ID", "EX", "MEM", "WB"];
+function renderSource() {
+  const tags = {};
+  if (core === "single") tags[G(cyc, "pc")] = [["", "accent"]];
+  else for (let s = 0; s < 5; s++) { const pc = pipePcAt(cyc, s); if (pc) (tags[pc] = tags[pc] || []).push([STAGES[s], instColor(TR.pipe.st[cyc][s])]); }
+  let first = null;
+  $("src").querySelectorAll(".ln").forEach((d) => {
+    const addrs = d.dataset.addrs ? d.dataset.addrs.split(" ") : [];
+    const t = addrs.flatMap((a) => tags[a] || []);
+    const cur = core === "single" ? t.length > 0 : t.some((x) => x[0] === "EX");
+    d.classList.toggle("current", cur);
+    d.querySelector(".tags").innerHTML = core === "pipe" ? t.map(([s, col]) => `<span class="tag" style="--k:var(--${col})">${s}</span>`).join("") : "";
+    if (cur && !first) first = d;
+  });
+  if (first) scrollIntoViewIn($("srcScroll"), first);
+}
+function scrollIntoViewIn(box, e) {
+  const br = box.getBoundingClientRect(), er = e.getBoundingClientRect();
+  if (er.top < br.top || er.bottom > br.bottom) box.scrollTop += er.top - br.top - box.clientHeight / 3;
+}
+
+// =====================================================================
+// パイプライン
+// =====================================================================
+function instColor(id) { return id < 0 ? "muted" : "c" + ((id % 6) + 1); }
+let PD = null;   // パイプライン図の行の並び
+function prepPipe() {
+  const P = TR.pipe, n = P.insts.length;
+  // バブルの行は、止められた命令の直前に置く
+  const key = new Array(n).fill(0).map((_, i) => i);
+  const seen = new Set();
+  P.st.forEach((st, t) => st.forEach((id, s) => {
+    if (id < 0 || seen.has(id)) return;
+    seen.add(id);
+    if (P.insts[id].b) {
+      const held = s > 0 ? st[s - 1] : -1;
+      key[id] = (held >= 0 ? held : id) - 0.5 + id * 1e-4;
+    }
+  }));
+  const order = [...Array(n).keys()].sort((a, b) => key[a] - key[b]);
+  const row = new Array(n);
+  order.forEach((id, r) => (row[id] = r));
+  PD = { order, row };
+}
+function pipeLabel(id) {
+  const x = TR.pipe.insts[id];
+  if (x.b) return `バブル (${x.b === "load-use" ? "load-use" : x.b === "ecall" ? "ecall 待ち" : "バス待ち"})`;
+  return `${x.pc.padStart(5, " ")}  ${x.d}`;
+}
+function buildPipeDiagram() {
+  const P = TR.pipe, W = 34, H = 22, LW = 230, TOP = 22;
+  const n = PD.order.length, T = TR.cycles;
+  const box = $("pdiag");
+  box.textContent = "";
+  const svg = el("svg", { class: "pd", width: LW + T * W + 30, height: TOP + n * H + 6 }, box);
+  PD.svg = svg; PD.W = W; PD.H = H; PD.LW = LW; PD.TOP = TOP;
+  PD.colhl = el("rect", { class: "colhl", y: 0, width: W, height: TOP + n * H }, svg);
+  const hdr = el("g", {}, svg);
+  PD.hdr = [];
+  for (let t = 0; t < T; t++) {
+    const h = el("text", { class: "hdr", x: LW + t * W + W / 2, y: 14 }, hdr, t);
+    h.addEventListener("click", () => go(t, 0));
+    PD.hdr.push(h);
+  }
+  const cells = el("g", {}, svg);
+  PD.cellsByT = [];
+  for (let t = 0; t < T; t++) PD.cellsByT.push([]);
+  P.st.forEach((st, t) => st.forEach((id, s) => {
+    if (id < 0) return;
+    const x = LW + t * W, y = TOP + PD.row[id] * H;
+    const g = el("g", { class: "cell" }, cells);
+    const inst = P.insts[id];
+    if (inst.b) {
+      el("rect", { class: "bcell", x: x + 2, y: y + 2, width: W - 4, height: H - 4, rx: 3 }, g);
+    } else {
+      const stalled = t > 0 && P.st[t - 1][s] === id;
+      el("rect", { x: x + 1, y: y + 1, width: W - 2, height: H - 2, rx: 3, style: `fill:color-mix(in srgb, var(--${instColor(id)}) ${stalled ? 10 : 24}%, var(--panel));stroke:var(--${instColor(id)})` }, g);
+      el("text", { x: x + W / 2, y: y + H / 2 + 4, style: stalled ? "font-style:italic;fill:var(--muted)" : "" }, g, STAGES[s]);
+    }
+    g.addEventListener("click", () => go(t, 0));
+    PD.cellsByT[t].push(g);
+  }));
+  // 行ラベルと取り消し線
+  const labs = el("g", {}, svg);
+  PD.order.forEach((id, r) => {
+    const x = P.insts[id], y = TOP + r * H + H / 2 + 4;
+    const dim = !!x.b || (!x.c && !x.f);
+    el("text", { class: "lab" + (dim ? " dim" : ""), x: 4, y }, labs, pipeLabel(id).slice(0, 30) + (x.f ? "  (捨てた)" : !x.c && !x.b ? "  (未完了)" : ""));
+    if (x.f) {
+      const tf = x.f - 1;
+      let t0 = P.st.findIndex((st) => st.includes(id));
+      el("line", { class: "strike", x1: 4, x2: LW - 8, y1: y - 4, y2: y - 4 }, labs);
+      el("line", { class: "strike", x1: LW + t0 * W + 2, x2: LW + (tf + 1) * W - 2, y1: y - 4, y2: y - 4 }, labs);
+    }
+  });
+  // フォワーディングの矢印
+  const arrows = el("g", {}, svg);
+  PD.arrByT = [];
+  for (let t = 0; t < T; t++) PD.arrByT.push([]);
+  const defs = el("defs", {}, svg);
+  for (const k of ["c3", "c4"]) {
+    const m = el("marker", { id: "ah-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", style: `fill:var(--${k})` }, m);
+  }
+  P.fwd.forEach((fw, t) => fw.forEach((src, k) => {
+    if (src !== 1 && src !== 2) return;
+    const from = P.st[t][src === 1 ? 3 : 4], to = P.st[t][2];
+    if (from < 0 || to < 0) return;
+    const x = LW + t * W, y1 = TOP + PD.row[from] * H + H / 2, y2 = TOP + PD.row[to] * H + H / 2;
+    const col = src === 1 ? "c3" : "c4", off = k === 0 ? 0 : 5;
+    const p = el("path", { class: "farrow", d: `M${x + W - 4},${y1 + 4} C${x + W + 12 + off},${y1 + 8} ${x + W + 12 + off},${y2 - 6} ${x + W - 2},${y2 - 2}`, style: `stroke:var(--${col})`, "marker-end": `url(#ah-${col})` }, arrows);
+    PD.arrByT[t].push(p);
+  }));
+}
+function renderPipeDiagram() {
+  const T = TR.cycles;
+  PD.colhl.setAttribute("x", PD.LW + cyc * PD.W);
+  for (let t = 0; t < T; t++) {
+    const fut = t > cyc;
+    PD.cellsByT[t].forEach((g) => g.classList.toggle("future", fut));
+    PD.arrByT[t].forEach((g) => g.classList.toggle("future", fut));
+    PD.hdr[t].classList.toggle("cur", t === cyc);
+  }
+  // 現在のサイクルの列と、EX にいる命令の行が見えるようにスクロール
+  const box = $("pdiag"), x = PD.LW + cyc * PD.W;
+  if (x < box.scrollLeft + PD.LW || x + PD.W > box.scrollLeft + box.clientWidth) box.scrollLeft = Math.max(0, x - box.clientWidth / 2);
+  const ids = TR.pipe.st[cyc].filter((i) => i >= 0);
+  if (ids.length) {
+    const rows = ids.map((i) => PD.row[i]);
+    const y0 = PD.TOP + Math.min(...rows) * PD.H, y1 = PD.TOP + (Math.max(...rows) + 1) * PD.H;
+    if (y0 < box.scrollTop || y1 > box.scrollTop + box.clientHeight) box.scrollTop = Math.max(0, (y0 + y1) / 2 - box.clientHeight / 2);
+  }
+}
+
+// 5 段のストリップ
+function renderStrip() {
+  const svg = $("ps"), c = cyc, g = (n) => G(c, n), B = (n) => g(n) === "1";
+  svg.textContent = "";
+  const P = TR.pipe, st = P.st[c];
+  const X = (s) => 12 + s * 198, Y = 40, W = 168, H = 110;
+  const defs = el("defs", {}, svg);
+  for (const k of ["c3", "c4", "c5", "border"]) {
+    const m = el("marker", { id: "sa-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", style: `fill:var(--${k})` }, m);
+  }
+  const stall = { 0: B("front_stall"), 1: B("front_stall"), 2: B("mem_stall") || B("ex_stall"), 3: B("mem_stall"), 4: false };
+  const regs = ["fd_", "de_", "em_", "mw_"];
+  for (let s = 0; s < 5; s++) {
+    const id = st[s], x = X(s), inst = id >= 0 ? P.insts[id] : null;
+    const gg = el("g", { class: "stg" + (inst && inst.b ? " bubble" : "") }, svg);
+    const col = instColor(id);
+    el("rect", { class: "box", x, y: Y, width: W, height: H, rx: 6, style: inst && !inst.b ? `fill:color-mix(in srgb, var(--${col}) 22%, var(--panel));stroke:var(--${col})` : "" }, gg);
+    el("text", { class: "st", x: x + 8, y: Y - 8 }, gg, STAGES[s]);
+    el("text", { class: "pcx", x: x + [30, 30, 32, 50, 42][s], y: Y - 8 }, gg, ["命令フェッチ", "デコード・レジスタ読み", "ALU・分岐判定", "メモリ (バス)", "書き戻し"][s]);
+    if (!inst) el("text", { class: "di", x: x + 10, y: Y + 30, style: "fill:var(--muted)" }, gg, "— (空)");
+    else if (inst.b) { el("text", { class: "di", x: x + 10, y: Y + 30, style: "fill:var(--muted)" }, gg, "バブル (nop)"); el("text", { class: "pcx", x: x + 10, y: Y + 48 }, gg, inst.b === "load-use" ? "load-use で入った" : inst.b === "ecall" ? "ecall 待ちで入った" : "バス待ちで入った"); }
+    else {
+      el("text", { class: "di", x: x + 10, y: Y + 30 }, gg, inst.d.length > 21 ? inst.d.slice(0, 20) + "…" : inst.d);
+      el("text", { class: "pcx", x: x + 10, y: Y + 48 }, gg, "pc " + hx(inst.pc));
+      const extra = [];
+      if (s === 2) { extra.push(`alu_y=${fmt(g("alu_y"))}`); if (B("br_taken") && g("redirect") === "1") extra.push("分岐成立"); }
+      if (s === 3 && B("d_valid")) extra.push((B("d_we") ? "store " : "load ") + hx(g("d_addr")));
+      if (s === 4 && B("rf_we") && g("rf_rd") !== "0") extra.push(`${regName(g("rf_rd"))} ← ${fmt(g("rf_wdata"))}`);
+      extra.forEach((t, i) => el("text", { class: "pcx", x: x + 10, y: Y + 66 + i * 16, style: "fill:var(--text)" }, gg, t));
+    }
+    const notes = [];
+    if (stall[s] && inst && !inst.b) notes.push("停止 (stall)");
+    if (s === 1 && B("load_use")) notes.push("load-use!");
+    if (s === 1 && B("ecall_drain")) notes.push("ecall ドレイン待ち");
+    if ((s === 0 || s === 1) && B("redirect") && inst) notes.push("✕ 捨てる");
+    if (s === 3 && B("mem_stall")) notes.push("d_ready 待ち");
+    notes.forEach((t, i) => el("text", { class: "note", x: x + 10, y: Y + H - 10 - i * 15 }, gg, t));
+    if ((s === 0 || s === 1) && B("redirect") && inst) {
+      el("line", { class: "xmark", x1: x + 4, y1: Y + 4, x2: x + W - 4, y2: Y + H - 4 }, gg);
+      el("line", { class: "xmark", x1: x + W - 4, y1: Y + 4, x2: x + 4, y2: Y + H - 4 }, gg);
+    }
+    if (s < 4) {
+      el("rect", { class: "preg", x: x + W + 10, y: Y - 4, width: 9, height: H + 8, rx: 2 }, svg);
+      el("text", { class: "preg-l", x: x + W + 15, y: Y + H + 18 }, svg, regs[s]);
+      el("line", { x1: x + W, y1: Y + H / 2, x2: x + W + 10, y2: Y + H / 2, style: "stroke:var(--muted);stroke-width:1.5" }, svg);
+      el("line", { x1: x + W + 19, y1: Y + H / 2, x2: X(s + 1), y2: Y + H / 2, style: "stroke:var(--muted);stroke-width:1.5" }, svg);
+    }
+  }
+  // フォワーディング: EX/MEM (em_) と MEM/WB (mw_) から EX の入力へ
+  const fw = P.fwd[c];
+  const exIn = X(2) + 30, yb = Y + H;
+  const arrow = (fromX, k, on, label, depth) => {
+    const d = `M${fromX},${yb + 4} L${fromX},${yb + depth} L${exIn + k},${yb + depth} L${exIn + k},${yb + 3}`;
+    el("path", { class: "farrow" + (on ? "" : " off"), d, style: on ? `stroke:var(--${on})` : "", "marker-end": `url(#sa-${on || "border"})` }, svg);
+    el("text", { class: "flab", x: (fromX + exIn) / 2 + 10, y: yb + depth - 5, style: `fill:var(--${on || "muted"})`, "text-anchor": "middle" }, svg, label);
+  };
+  const srcs = (v) => fw.map((x, i) => (x === v ? ["rs1", "rs2"][i] : null)).filter(Boolean);
+  const s1 = srcs(1), s2 = srcs(2);
+  arrow(X(2) + W + 15, 0, s1.length ? "c3" : null, "EX/MEM → EX" + (s1.length ? ` (${s1.join(",")}=${fmt(g("em_result"))})` : ""), 50);
+  arrow(X(3) + W + 15, 14, s2.length ? "c4" : null, "MEM/WB → EX" + (s2.length ? ` (${s2.join(",")}=${fmt(g("mw_val"))})` : ""), 86);
+  // 分岐・ジャンプ: EX → IF
+  const red = B("redirect");
+  el("path", { class: "farrow" + (red ? "" : " off"), d: `M${X(2) + W / 2},${Y - 22} L${X(2) + W / 2},${Y - 30} L${X(0) + W / 2 + 40},${Y - 30} L${X(0) + W / 2 + 40},${Y - 22}`, style: red ? "stroke:var(--c5)" : "", "marker-end": `url(#sa-${red ? "c5" : "border"})` }, svg);
+  el("text", { class: "flab", x: X(1) + W / 2 + 20, y: Y - 33, "text-anchor": "middle", style: `fill:var(--${red ? "c5" : "muted"})` }, svg, red ? `redirect: pc ← ${hx(g("redirect_pc"))} (IF・ID を捨てる)` : "redirect (分岐成立・ジャンプ)");
+
+  // 文章での説明
+  const hz = [];
+  const who = (s) => { const id = st[s]; return id >= 0 && !P.insts[id].b ? `<code>${esc(P.insts[id].d)}</code>` : "(なし)"; };
+  if (B("load_use")) hz.push(`<b>load-use</b>: ID の ${who(1)} が、EX のロード ${who(2)} の結果 (${regName(g("de_rd"))}) を使いたい。値はまだメモリから来ていないので、IF・ID を 1 サイクル止めて EX にバブルを入れる。`);
+  if (B("ecall_drain")) hz.push(`<b>ecall のドレイン</b>: 先行する命令が全部 WB を抜けるまで ecall を ID で待たせる。`);
+  if (B("mem_stall")) hz.push(`<b>バス待ち</b>: MEM の ${who(3)} が d_ready = 0。IF〜MEM を止めて WB にバブル。`);
+  if (red) hz.push(`<b>redirect</b>: EX の ${who(2)} で飛び先が決まった。IF の ${who(0)} と ID の ${who(1)} は次のエッジで捨てられる。`);
+  if (s1.length) hz.push(`<b>フォワーディング (EX/MEM → EX)</b>: ${who(2)} の ${s1.join(" と ")} は、1 つ前の ${who(3)} の結果を EX/MEM レジスタから直接もらう。`);
+  if (s2.length) hz.push(`<b>フォワーディング (MEM/WB → EX)</b>: ${who(2)} の ${s2.join(" と ")} は、2 つ前の ${who(4)} の結果を MEM/WB レジスタから直接もらう。`);
+  if (!hz.length) hz.push(`<span class="muted">このサイクルにはハザードはありません。</span>`);
+  $("hz").innerHTML = hz.map((h) => `<li>${h}</li>`).join("");
+}
+
+const HZ_ROWS = [
+  ["load_use", "EX のロードの結果を ID の命令がすぐ使う"],
+  ["ecall_drain", "ecall が先行命令の完了を待つ"],
+  ["id_stall", "IF・ID を止めて EX にバブル"],
+  ["mem_stall", "MEM がバスの応答待ち (IF〜MEM を止める)"],
+  ["ex_stall", "EX が ecall の処理待ち"],
+  ["redirect", "分岐成立・ジャンプ: IF/ID と ID/EX を捨てる"],
+  ["redirect_pc", "飛び先"],
+  ["fwd_a", "EX の rs1 の出どころ: 0=ID で読んだ値, 1=EX/MEM, 2=MEM/WB"],
+  ["fwd_b", "EX の rs2 の出どころ (同上)"],
+  ["de_rs1", "EX の命令の rs1 番号"],
+  ["de_rs2", "EX の命令の rs2 番号"],
+  ["em_rd", "MEM の命令の書き込み先"],
+  ["mw_rd", "WB の命令の書き込み先"],
+  ["d_valid", "MEM: データバスにアクセス中"],
+  ["d_ready", "MEM: バスの応答"],
+  ["commit", "WB で命令が完了"],
+];
+function renderHzTable() {
+  const c = cyc, rows = [];
+  for (const [n, desc] of HZ_ROWS) {
+    let v = G(c, n);
+    const pv = c > 0 ? G(c - 1, n) : v;
+    let shown = v;
+    if (n === "redirect_pc") shown = hx(v);
+    else if (/^(de_rs|em_rd|mw_rd)/.test(n)) shown = regName(v);
+    else if (n.startsWith("fwd_")) shown = v + " " + ["(ID)", "(EX/MEM)", "(MEM/WB)", ""][parseInt(v, 16)];
+    rows.push(`<tr class="${v === "0" ? "off" : ""}"><td class="nm">${n}</td><td class="v${v !== pv ? " changed" : ""}">${esc(shown)}</td><td class="desc">${esc(desc)}</td></tr>`);
+  }
+  $("hzt").innerHTML = rows.join("");
+}
+
+// ---------------- 比較 ----------------
+let periodRatio = 0.25;
+function renderCompare() {
+  const s = core === "single" ? TR : OTHER, p = core === "pipe" ? TR : OTHER;
+  if (!s || !p) { $("cmp").textContent = ""; return; }
+  const cpi = (t) => (t.cycles / Math.max(1, t.instret)).toFixed(2);
+  const ts = s.cycles * 1, tp = p.cycles * periodRatio, mx = Math.max(ts, tp);
+  const opts = [[0.2, "1/5 (理想)"], [0.25, "1/4"], [1 / 3, "1/3"], [0.5, "1/2"], [1, "同じ"]];
+  $("cmp").innerHTML = `
+    <table class="kv">
+      <tr><th></th><th>サイクル数</th><th>命令数</th><th>CPI</th></tr>
+      <tr class="${core === "single" ? "current" : ""}"><td>単一サイクル</td><td class="v">${s.cycles}</td><td class="v">${s.instret}</td><td class="v">${cpi(s)}</td></tr>
+      <tr class="${core === "pipe" ? "current" : ""}"><td>5 段パイプライン</td><td class="v">${p.cycles}</td><td class="v">${p.instret}</td><td class="v">${cpi(p)}</td></tr>
+    </table>
+    <div class="toolbar" style="margin-top:8px"><label class="muted" for="period">パイプラインのクロック周期 = 単一サイクル版の</label>
+      <select id="period">${opts.map(([v, l]) => `<option value="${v}"${Math.abs(v - periodRatio) < 1e-9 ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+    <div class="cmp">
+      <span>単一サイクル</span><div class="track"><div class="bar" style="--bc:var(--c1);width:${(ts / mx) * 70}%"></div><span class="val">${s.cycles} × 1 = ${ts.toFixed(1)}</span></div>
+      <span>パイプライン</span><div class="track"><div class="bar" style="--bc:var(--c2);width:${(tp / mx) * 70}%"></div><span class="val">${p.cycles} × ${(+periodRatio).toFixed(2)} = ${tp.toFixed(1)}</span></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:4px 0 0">かかる時間 = サイクル数 × クロック周期 (単一サイクル版の周期を 1 とした相対値)。5 段に分けても、段の長さの不揃いやパイプラインレジスタ自身の遅延があるので、周期はちょうど 1/5 にはなりません。この短いデモでは最初の充填と最後の ecall のドレインの分が目立ちます。</p>`;
+  $("period").addEventListener("change", (e) => { periodRatio = +e.target.value; renderCompare(); });
+}
+
+// =====================================================================
+// 波形
+// =====================================================================
+function waveSignals() {
+  const list = [{ n: "clk", w: 1, g: "clock" }];
+  for (const s of TR.sigs) list.push(s);
+  for (let i = 1; i < 32; i++) list.push({ n: ABI[i], w: 64, g: "registers", reg: i });
+  return list;
+}
+function waveVal(s, c) {
+  if (s.reg) return regsBefore(c)[s.reg];
+  return TR.V(c)[s.i];
+}
+function buildSigPicker() {
+  const groups = {};
+  for (const s of waveSignals()) (groups[s.g] = groups[s.g] || []).push(s);
+  const sel = new Set(waveSel[core]);
+  $("sigboxes").innerHTML = Object.entries(groups).map(([g, ss]) =>
+    `<div class="grp"><b>${esc(g)}</b>${ss.map((s) => `<label><input type="checkbox" data-n="${s.n}"${sel.has(s.n) ? " checked" : ""}>${esc(s.n)}</label>`).join("")}</div>`).join("");
+  $("sigboxes").querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => {
+    const n = cb.dataset.n, arr = waveSel[core];
+    if (cb.checked) { if (!arr.includes(n)) arr.push(n); } else waveSel[core] = arr.filter((x) => x !== n);
+    try { localStorage.setItem("hw.waveSel", JSON.stringify(waveSel)); } catch (e) {}
+    buildWave(); renderWave();
+  }));
+}
+let WV = null;
+function buildWave() {
+  const all = waveSignals(), by = {};
+  all.forEach((s) => (by[s.n] = s));
+  const sigs = waveSel[core].map((n) => by[n]).filter(Boolean);
+  const T = TR.cycles, W = zoom, RH = 24, TOPH = 24;
+  const svg = $("wave");
+  svg.textContent = "";
+  const width = T * W + 8, height = TOPH + sigs.length * RH;
+  svg.setAttribute("width", width); svg.setAttribute("height", height);
+  WV = { sigs, W, RH, TOPH, svg };
+  WV.cur = el("rect", { class: "cur", y: 0, width: W, height }, svg);
+  for (let t = 0; t <= T; t++) {
+    el("line", { class: "grid", x1: t * W, x2: t * W, y1: TOPH - 6, y2: height }, svg);
+    const every = W >= 30 ? 1 : W >= 16 ? 2 : 5;
+    if (t < T && t % every === 0) el("text", { class: "tl", x: t * W + W / 2, y: 14 }, svg, t);
+  }
+  sigs.forEach((s, r) => {
+    const y = TOPH + r * RH, hi = y + 5, lo = y + RH - 5, mid = y + RH / 2;
+    el("line", { class: "rowline", x1: 0, x2: width, y1: y + RH, y2: y + RH }, svg);
+    if (s.n === "clk") {
+      let d = `M0,${lo}`;
+      for (let t = 0; t < T; t++) { const x = t * W; d += ` L${x},${lo} L${x},${hi} L${x + W / 2},${hi} L${x + W / 2},${lo}`; }
+      d += ` L${T * W},${lo}`;
+      el("path", { class: "clk", d }, svg);
+      return;
+    }
+    if (s.w === 1) {
+      let d = "";
+      for (let t = 0; t < T; t++) {
+        const v = waveVal(s, t), yy = v === "1" ? hi : lo;
+        if (v !== "0" && v !== "1") { el("rect", { class: "bus busx", x: t * W, y: hi, width: W, height: lo - hi }, svg); continue; }
+        d += (d ? ` L${t * W},${yy}` : `M${t * W},${yy}`) + ` L${(t + 1) * W},${yy}`;
+      }
+      el("path", { class: "hi", d }, svg);
+      return;
+    }
+    let t0 = 0;
+    for (let t = 1; t <= T; t++) {
+      if (t < T && waveVal(s, t) === waveVal(s, t0)) continue;
+      const v = waveVal(s, t0), x0 = t0 * W, x1 = t * W, k = Math.min(4, (x1 - x0) / 3);
+      el("polygon", { class: "bus" + (v === "x" ? " busx" : ""), points: `${x0},${mid} ${x0 + k},${hi} ${x1 - k},${hi} ${x1},${mid} ${x1 - k},${lo} ${x0 + k},${lo}` }, svg);
+      const txt = waveText(s, v);
+      if (txt.length * 6.4 + 6 < x1 - x0) el("text", { class: "bt", x: (x0 + x1) / 2, y: mid }, svg, txt);
+      t0 = t;
+    }
+  });
+  WV.cursor = el("line", { class: "cursor", y1: 0, y2: height }, svg);
+  svg.onclick = (e) => {
+    const r = svg.getBoundingClientRect();
+    const t = Math.floor((e.clientX - r.left) / W);
+    if (t >= 0 && t < T) go(t, 0);
+  };
+  $("wvnames").innerHTML = `<div class="hd"><span>signal</span><span>値</span></div>` + sigs.map((s) => `<div title="${esc(s.n)}"><span>${esc(s.n)}</span><span class="cv"></span></div>`).join("");
+}
+function waveText(s, v) {
+  if (v === "x") return "x";
+  if (/inst|i_data/.test(s.n)) return v.padStart(8, "0");
+  if (/(^|_)rd$|rs[12]$|rf_rd|de_rs|em_rd|mw_rd/.test(s.n)) return regName(v);
+  if (/pc|addr/.test(s.n)) return v;
+  return fmt(v, s.w);
+}
+function renderWave() {
+  if (!WV) return;
+  const W = WV.W;
+  WV.cur.setAttribute("x", cyc * W);
+  const cx = core === "single" ? (phase ? (cyc + 1) * W : cyc * W + W / 2) : cyc * W + W / 2;
+  WV.cursor.setAttribute("x1", cx); WV.cursor.setAttribute("x2", cx);
+  const vals = $("wvnames").querySelectorAll(".cv");
+  WV.sigs.forEach((s, i) => {
+    if (s.n === "clk") { vals[i].textContent = core === "single" && phase ? "↑" : ""; return; }
+    let v = s.reg && core === "single" && phase ? TR.regs[cyc][s.reg] : waveVal(s, cyc);
+    vals[i].textContent = s.w === 1 ? v : waveText(s, v);
+  });
+  const box = $("wvscroll");
+  if (cx < box.scrollLeft + 10 || cx > box.scrollLeft + box.clientWidth - 10) box.scrollLeft = Math.max(0, cx - box.clientWidth / 2);
+}
+
+// =====================================================================
+// 全体
+// =====================================================================
+function curPc() { return core === "single" ? G(cyc, "pc") : null; }
+function render() {
+  if (!TR) return;
+  const T = TR.cycles;
+  $("slider").max = T - 1; $("slider").value = cyc;
+  $("jump").max = T - 1; $("jump").value = cyc;
+  $("cycBadge").textContent = `cycle ${cyc} / ${T - 1}`;
+  let commits = 0;
+  for (let c = 0; c <= cyc; c++) if (G(c, "commit") === "1") commits++;
+  if (core === "single" && !phase && G(cyc, "commit") === "1") commits--;   // まだエッジ前
+  const cycles = core === "single" ? cyc + phase : cyc + 1;
+  $("cpiBadge").textContent = commits > 0 ? `完了 ${commits} 命令 / ${cycles} サイクル = CPI ${(cycles / commits).toFixed(2)}` : `完了 0 命令`;
+  $("ph0").classList.toggle("on", core === "pipe" || !phase);
+  $("ph1").classList.toggle("on", core === "single" && phase === 1);
+  $("phaseBox").hidden = core !== "single";
+  const fl = [];
+  if (core === "single") {
+    const pc = G(cyc, "pc");
+    $("curinst").innerHTML = `pc <b>${hx(pc)}</b> <code>${G(cyc, "inst").padStart(8, "0")}</code> ${esc(TR.dis[pc] || "")}`;
+    if (G(cyc, "stall") === "1") fl.push(`<span class="badge warn">stall (${G(cyc, "d_valid") === "1" ? "バスの応答待ち" : "ecall 待ち"})</span>`);
+    if (G(cyc, "redirect") === "1") fl.push(`<span class="badge">redirect → ${hx(G(cyc, "next_pc"))}</span>`);
+    if (G(cyc, "ecall") === "1") fl.push(`<span class="badge">ecall (OS = テストベンチが処理)</span>`);
+    if (phase) fl.push(`<span class="badge warn">エッジ: pc ← ${hx(G(cyc, "stall") === "1" ? G(cyc, "pc") : G(cyc, "next_pc"))}${G(cyc, "rf_we") === "1" && G(cyc, "rf_rd") !== "0" ? `, ${regName(G(cyc, "rf_rd"))} ← ${fmt(G(cyc, "rf_wdata"))}` : ""}</span>`);
+    renderDatapath();
+    renderBits(Number(big(G(cyc, "inst")) ?? 0n));
+    renderCtrl();
+  } else {
+    const id = TR.pipe.st[cyc][2];
+    const x = id >= 0 ? TR.pipe.insts[id] : null;
+    $("curinst").innerHTML = `EX: ${x ? (x.b ? "バブル" : `<b>${hx(x.pc)}</b> ${esc(x.d)}`) : "(空)"}`;
+    for (const n of ["load_use", "id_stall", "mem_stall", "redirect"]) if (G(cyc, n) === "1") fl.push(`<span class="badge warn">${n}</span>`);
+    if (G(cyc, "fwd_a") !== "0" || G(cyc, "fwd_b") !== "0") fl.push(`<span class="badge">fwd_a=${G(cyc, "fwd_a")} fwd_b=${G(cyc, "fwd_b")}</span>`);
+    renderStrip();
+    renderPipeDiagram();
+    renderHzTable();
+  }
+  if (cyc === T - 1 && (core === "pipe" || phase)) fl.push(TR.exit != null ? `<span class="badge ok">exit(${TR.exit})</span>` : `<span class="badge">ここで打ち切り</span>`);
+  $("flags").innerHTML = fl.join(" ");
+  renderSource();
+  renderRegs();
+  renderWave();
+}
+function go(c, ph) {
+  cyc = Math.max(0, Math.min(TR.cycles - 1, c));
+  phase = core === "single" ? ph : 0;
+  render();
+}
+function step(dir) {
+  if (core === "single") {
+    if (dir > 0) { if (phase === 0) go(cyc, 1); else if (cyc < TR.cycles - 1) go(cyc + 1, 0); else return false; }
+    else { if (phase === 1) go(cyc, 0); else if (cyc > 0) go(cyc - 1, 1); else return false; }
+  } else {
+    if (dir > 0 && cyc >= TR.cycles - 1) return false;
+    if (dir < 0 && cyc <= 0) return false;
+    go(cyc + dir, 0);
+  }
+  return true;
+}
+function setPlaying(p) {
+  playing = p;
+  $("play").textContent = p ? "一時停止" : "再生";
+  clearTimeout(timer);
+  if (p) {
+    const tick = () => { if (!playing) return; if (!step(1)) { setPlaying(false); return; } timer = setTimeout(tick, +$("speed").value / (core === "single" ? 2 : 1)); };
+    if (core === "single" ? (cyc >= TR.cycles - 1 && phase) : cyc >= TR.cycles - 1) go(0, 0);
+    timer = setTimeout(tick, 100);
+  }
+}
+
+let selectSeq = 0;
+async function select(d, c, keepCycle) {
+  setPlaying(false);
+  const my = ++selectSeq;
+  $("demo").value = d; $("core").value = c;
+  let tr, other;
+  try {
+    tr = await loadTrace(d, c);
+    other = await loadTrace(d, c === "single" ? "pipe" : "single");
+  } catch (e) {
+    showError("トレースを読み込めませんでした: " + e.message + "\nweb/hw/build.sh を実行して traces/ を作ってください (Icarus Verilog が必要)。");
+    return;
+  }
+  if (my !== selectSeq) return;   // 読み込み中に別のデモ・コアが選ばれた
+  demo = d; core = c; TR = tr; OTHER = other;
+  const rowsV = TR.v;
+  TR.V = (k) => rowsV[k];
+  try { history.replaceState(null, "", "#" + d + "/" + c); } catch (e) {}
+  $("coreBadge").textContent = c === "single" ? "単一サイクル" : "5 段パイプライン";
+  const single = c === "single";
+  for (const id of ["dpPanel", "bitsPanel", "ctrlPanel"]) $(id).hidden = !single;
+  for (const id of ["stripPanel", "diagPanel", "hzPanel"]) $(id).hidden = single;
+  $("step").textContent = single ? "▶ 半ステップ" : "▶ 1 サイクル";
+  const info = INDEX.find((x) => x.name === d);
+  $("notesTitle").textContent = "見どころ: " + (info ? info.title : d) + (TR.wait ? ` (RAM 待ち ${TR.wait})` : "");
+  $("notes").innerHTML = ((NOTES[d] || {})[c] || []).map((s) => `<li>${s}</li>`).join("") +
+    `<li class="muted">${TR.instret} 命令 / ${TR.cycles} サイクル${TR.console ? `、出力 <code>${esc(JSON.stringify(TR.console))}</code>` : ""}${TR.exit != null ? `、exit(${TR.exit})` : ""}。もう一方のコアでは ${OTHER.cycles} サイクル。</li>`;
+  buildSource();
+  if (!single) { prepPipe(); buildPipeDiagram(); }
+  buildSigPicker();
+  buildWave();
+  renderCompare();
+  if (!keepCycle) { cyc = 0; phase = 0; }
+  cyc = Math.min(cyc, TR.cycles - 1);
+  if (!single) phase = 0;
+  render();
+}
+
+async function main() {
+  try {
+    INDEX = await fetchJSON("traces/index.json");
+  } catch (e) {
+    showError("traces/index.json を読み込めませんでした (" + e.message + ")。\nweb/hw/build.sh を実行して、Verilog シミュレーションのトレースを作ってください (Icarus Verilog が必要)。");
+    return;
+  }
+  $("demo").innerHTML = INDEX.map((d) => `<option value="${d.name}">${esc(d.title)} — ${d.cycles.single} / ${d.cycles.pipe} cyc</option>`).join("");
+  buildDatapath();
+  $("demo").addEventListener("change", () => { const d = INDEX.find((x) => x.name === $("demo").value); select(d.name, d.focus); });
+  $("core").addEventListener("change", () => select($("demo").value, $("core").value));
+  $("first").addEventListener("click", () => { setPlaying(false); go(0, 0); });
+  $("back").addEventListener("click", () => { setPlaying(false); step(-1); });
+  $("step").addEventListener("click", () => { setPlaying(false); step(1); });
+  $("play").addEventListener("click", () => setPlaying(!playing));
+  $("jump").addEventListener("change", () => { setPlaying(false); go(+$("jump").value || 0, 0); });
+  $("slider").addEventListener("input", () => { setPlaying(false); go(+$("slider").value, 0); });
+  $("fit").addEventListener("click", () => { const f = $("dpwrap").classList.toggle("fit"); $("fit").textContent = f ? "拡大表示 (スクロール)" : "全体を縮小表示"; });
+  $("zin").addEventListener("click", () => { zoom = Math.min(90, Math.round(zoom * 1.4)); buildWave(); renderWave(); });
+  $("zout").addEventListener("click", () => { zoom = Math.max(8, Math.round(zoom / 1.4)); buildWave(); renderWave(); });
+  document.addEventListener("keydown", (e) => {
+    if (!TR || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.key === "ArrowRight") { setPlaying(false); step(1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft") { setPlaying(false); step(-1); e.preventDefault(); }
+    else if (e.key === " ") { setPlaying(!playing); e.preventDefault(); }
+  });
+  if (matchMedia("(max-width: 640px)").matches) zoom = 26;
+  const m = location.hash.match(/^#(\w+)\/(single|pipe)$/);
+  const first = m && INDEX.find((x) => x.name === m[1]) ? [m[1], m[2]] : [INDEX[0].name, INDEX[0].focus];
+  $("loading").hidden = true;
+  $("app").hidden = false;
+  await select(first[0], first[1]);
+}
+main().catch((e) => showError(String(e && e.stack || e)));
+</script>
+</body>
+</html>

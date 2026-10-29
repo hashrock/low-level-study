@@ -55,7 +55,10 @@ make test                                   # fib.c (490 万命令) なども含
 | `sim/sim_test.go` | 147 | 全プログラム × 2 コアの lockstep テスト | |
 | `tools/load/` | 57 | `go run ./tools/load -o build/x prog.c` → `x.elf` `x.hex` `x.args` | |
 | `tools/lockstep/` | 55 | 1 本だけ lockstep で実行する CLI | |
-| `tools/vcdcat/` | 237 | VCD を「1 クロック 1 行」の表にして表示 | |
+| `tools/vcdcat/` | 104 | VCD を「1 クロック 1 行」の表にして表示 (解析は `vcd/`) | |
+| `vcd/` | 207 | VCD の読み込み (クロックの立ち上がり直前の値を 1 行にする) | |
+| `tools/trace2json/` | 592 | `demos/*.s` を両方のコアでシミュレーションし、波形を `web/hw` 用の JSON にする | |
+| `demos/*.s` | 161 | `web/hw` (ブラウザで 1 クロックずつ見るページ) のデモ: 演算・ロード/ストア・分岐・呼び出し・MMIO・ストール・load-use・フォワーディング・フラッシュ・ループ | |
 | `tests/*.s` | 624 | 命令クラスごとの自己チェックテスト (alu, word, branch, loadstore, muldiv, fence, mmio, hazard) | `rv/*_test.go` |
 | `examples/demo.s` | 22 | 波形の解説用 (addi・ロード・MMIO ストア・exit) | |
 | **RTL 計 (rtl/)** | **1,140** | うち単一サイクル版に必要なのは core_pipe.v を除く 843 行 | |

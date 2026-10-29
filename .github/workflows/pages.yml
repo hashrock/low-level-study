@@ -27,6 +27,12 @@ jobs:
         with:
           version: 0.17.0
 
+      # web/hw は hw/ の Verilog CPU を Icarus Verilog で動かして波形 (traces/*.json) を作る
+      - name: Install Icarus Verilog (web/hw)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq iverilog
+
       - name: Build web/
         run: ./web/build.sh
 

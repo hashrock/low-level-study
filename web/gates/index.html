@@ -1,0 +1,1630 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>論理ゲート シミュレータ</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .status { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .status label { display: inline-flex; gap: 4px; align-items: center; }
+  .sec { margin: 0 0 20px; scroll-margin-top: 8px; }
+  .sec > h2 { font-size: 18px; margin: 18px 0 8px; }
+  .sec > h2 .num { color: var(--muted); margin-right: 4px; }
+  .wide { grid-column: 1 / -1; }
+  .panel h3 { font-size: 14px; margin: 0 0 6px; }
+  .panel p { margin: 6px 0; }
+  .notes { margin: 4px 0; padding-left: 1.2em; }
+  .notes li { margin: 2px 0; }
+  code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; font-family: var(--mono); font-size: 12.5px; }
+  pre code { background: none; padding: 0; }
+  a { color: var(--accent); }
+  .toc ol { margin: 0; padding-left: 1.4em; columns: 2 200px; }
+  .toc li { margin: 2px 0; }
+  .try { background: var(--panel-2); border-radius: var(--radius); padding: 6px 10px; margin-top: 8px; }
+  .try b { font-size: 12px; color: var(--muted); }
+  .links { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); align-items: center; }
+  .legend i { display: inline-block; width: 22px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 4px; }
+  .legend .l1 { border-color: var(--ok); }
+  .legend .l0 { border-color: var(--muted); }
+  .legend .lx { border-color: var(--accent); border-top-style: dashed; }
+  .legend .lon { border-color: var(--c4); }
+
+  /* ---- 回路図 (SVG) ---- */
+  .sch-wrap { overflow-x: auto; overflow-y: hidden; }
+  svg.sch { display: block; width: 100%; height: auto; margin: 0 auto; }
+  .sch text { font: 11px var(--mono); fill: var(--text); }
+  .sch text.sm { font-size: 9.5px; fill: var(--muted); }
+  .sch text.lbl { font-family: var(--sans); font-size: 11px; fill: var(--muted); }
+  .sch .w { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke: var(--muted); }
+  .sch .w.v0 { stroke: var(--muted); opacity: .6; }
+  .sch .w.v1 { stroke: var(--ok); stroke-width: 3; }
+  .sch .w.vx { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 5 3; }
+  .sch .dot { stroke: none; fill: var(--muted); }
+  .sch .dot.v1 { fill: var(--ok); }
+  .sch .dot.vx { fill: var(--accent); }
+  .sch .tap { stroke-width: 1.5; stroke: var(--muted); fill: var(--panel); }
+  .sch .tap.v1 { fill: var(--ok); stroke: var(--ok); }
+  .sch .tap.vx { fill: var(--accent); stroke: var(--accent); }
+  .sch .gate path, .sch .gate circle { fill: var(--panel); stroke: var(--text); stroke-width: 1.6; }
+  .sch .gate path.back { fill: none; }
+  .sch .gate.v1 path:not(.back), .sch .gate.v1 circle { stroke: var(--ok); }
+  .sch .gate.vx path:not(.back), .sch .gate.vx circle { fill: var(--accent-soft); stroke: var(--accent); }
+  .sch .tog { cursor: pointer; }
+  .sch .tog rect { fill: var(--panel-2); stroke: var(--muted); stroke-width: 1.5; }
+  .sch .tog:hover rect, .sch .tog:focus rect { stroke: var(--accent); }
+  .sch .tog:focus { outline: none; }
+  .sch .tog:focus-visible rect { stroke-width: 3; }
+  .sch .tog text { text-anchor: middle; dominant-baseline: central; font-weight: bold; }
+  .sch .tog.v1 rect { fill: var(--ok); stroke: var(--ok); }
+  .sch .tog.v1 text { fill: var(--panel); }
+  .sch .lamp circle { fill: var(--panel-2); stroke: var(--muted); stroke-width: 1.5; }
+  .sch .lamp text { text-anchor: middle; dominant-baseline: central; font-size: 10px; }
+  .sch .lamp.v1 circle { fill: var(--ok); stroke: var(--ok); }
+  .sch .lamp.v1 text { fill: var(--panel); }
+  .sch .lamp.vx circle { fill: var(--accent-soft); stroke: var(--accent); stroke-dasharray: 3 2; }
+  .sch .box { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+  .sch .box.v1 { fill: var(--accent-soft); }
+  .sch .prod { stroke-width: 2; stroke: var(--border); fill: none; }
+  .sch .prod.v1 { stroke: var(--ok); stroke-width: 3; }
+  .sch .prod.vx { stroke: var(--accent); stroke-dasharray: 5 3; }
+  .sch .rail { stroke: var(--text); stroke-width: 2.5; }
+  /* トランジスタ */
+  .sch .nd { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  .sch .nd.v1 { stroke: var(--ok); stroke-width: 3; }
+  .sch .nd.v0 { stroke: var(--muted); }
+  .sch .nd.vz { stroke: var(--muted); stroke-dasharray: 2 3; }
+  .sch .ch { stroke-width: 4; stroke: var(--muted); stroke-dasharray: 3 3; }
+  .sch .ch.on { stroke: var(--c4); stroke-dasharray: none; }
+  .sch .plate { stroke: var(--text); stroke-width: 2; fill: var(--panel); }
+  .sch text.on { fill: var(--c4); font-weight: bold; }
+  .sch text.off { fill: var(--muted); }
+  /* 波形 */
+  .sch .wave { fill: none; stroke: var(--ok); stroke-width: 2; }
+  .sch .wave.clk { stroke: var(--c1); }
+  .sch .edge { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; }
+  .sch .grid-l { stroke: var(--border); stroke-width: 1; }
+
+  /* HTML 側のランプと表 */
+  .hl { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--panel-2); border: 1.5px solid var(--muted); vertical-align: -1px; }
+  .hl.v1 { background: var(--ok); border-color: var(--ok); }
+  .hl.vx { background: var(--accent-soft); border-color: var(--accent); }
+  table.kv td.on { color: var(--ok); font-weight: bold; }
+  table.tt { width: auto; }
+  table.tt td, table.tt th { text-align: center; padding: 1px 10px; }
+  table.tt td.y { font-weight: bold; }
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .card { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; min-width: 0; }
+  .card h3 { display: flex; justify-content: space-between; gap: 8px; }
+  .card h3 code { font-weight: normal; }
+  .readout { font-family: var(--mono); font-size: 13px; }
+  .big { font-size: 16px; font-weight: bold; }
+  .timebar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-family: var(--mono); font-size: 13px; margin: 6px 0; }
+  .busy { color: var(--accent); }
+  input.num { width: 5.5em; font-family: var(--mono); }
+  .bits { display: flex; flex-wrap: wrap; gap: 4px; font-family: var(--mono); font-size: 12.5px; }
+  .bits .fld { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; text-align: center; }
+  .bits .fld small { display: block; color: var(--muted); font-size: 10px; }
+  .bits .fld.opc { border-color: var(--accent); background: var(--accent-soft); }
+  pre.code { background: var(--panel-2); border-radius: var(--radius); padding: 6px 0; max-height: 360px; overflow: auto; }
+  pre.code span { display: block; padding: 0 8px; }
+  pre.code span.current { background: var(--accent-soft); }
+  pre.code .ln { color: var(--muted); display: inline; padding: 0; margin-right: 8px; }
+  .split2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .split2 > * { min-width: 0; }
+  .log { font-family: var(--mono); font-size: 12px; max-height: 120px; overflow: auto; background: var(--panel-2); border-radius: var(--radius); padding: 4px 8px; }
+  .log div.changed { border-radius: 3px; }
+  #error:empty { display: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>論理ゲート: トランジスタから CPU の部品まで</h1>
+  <div class="status">
+    <label title="ゲートの出力が 1 遅延ずつ遅れて変わる様子を見る"><input type="checkbox" id="anim"> 伝搬をアニメーション</label>
+    <select id="speed" aria-label="アニメーションの速さ">
+      <option value="500">ゆっくり</option>
+      <option value="220" selected>ふつう</option>
+      <option value="70">速い</option>
+    </select>
+  </div>
+</header>
+<main>
+<pre id="error" class="err"></pre>
+
+<div class="grid">
+  <section class="panel wide">
+    <h2>このページについて</h2>
+    <p>CPU の中身は、結局 <b>0 と 1 を運ぶ配線</b> と <b>論理ゲート</b> の組み合わせです。
+      このページでは、トランジスタ 2〜4 個でできる NOT / NAND から始めて、
+      <a href="../hw/">自作 RISC-V CPU (hw/)</a> の中にある加算器 (<code>alu.v</code>)、
+      マルチプレクサ (<code>b_sel</code>)、デコーダ (<code>decoder.v</code>)、レジスタ (<code>regfile.v</code>) を
+      ゲートで組み立て、ビットが流れる様子を見ます。四角いスイッチをクリック (または Tab + Enter) すると入力が切り替わります。</p>
+    <div class="legend">
+      <span><i class="l1"></i>1 (≈1V)</span>
+      <span><i class="l0"></i>0 (0V)</span>
+      <span><i class="lx"></i>変化が向かっている途中 (ゲート遅延の間)</span>
+      <span><i class="lon"></i>導通しているトランジスタ</span>
+    </div>
+    <nav class="toc" style="margin-top:8px">
+      <ol>
+        <li><a href="#s1">トランジスタ → ゲート</a></li>
+        <li><a href="#s2">基本ゲート</a></li>
+        <li><a href="#s3">加算器と桁上げの伝搬</a></li>
+        <li><a href="#s4">マルチプレクサ (b_sel)</a></li>
+        <li><a href="#s5">命令デコーダ</a></li>
+        <li><a href="#s6">フリップフロップとレジスタ</a></li>
+        <li><a href="#s7">1 ビット ALU スライス</a></li>
+      </ol>
+    </nav>
+  </section>
+</div>
+
+<!-- ======================= 1. トランジスタ ======================= -->
+<section class="sec" id="s1">
+  <h2><span class="num">1.</span>トランジスタ → ゲート (CMOS)</h2>
+  <div class="grid">
+    <div class="panel">
+      <h3>CMOS NOT (インバータ)</h3>
+      <div class="sch-wrap" id="cmosNot"></div>
+      <p class="readout" id="cmosNotOut"></p>
+    </div>
+    <div class="panel">
+      <h3>CMOS NAND</h3>
+      <div class="sch-wrap" id="cmosNand"></div>
+      <p class="readout" id="cmosNandOut"></p>
+    </div>
+    <div class="panel wide">
+      <p><b>pMOS</b> はゲートが 0 のとき、<b>nMOS</b> はゲートが 1 のときにスイッチが閉じます (導通)。
+        CMOS では上 (VDD 側) に pMOS、下 (GND 側) に nMOS を置き、必ずどちらか一方だけが出力につながるので、
+        出力は 1 (≈1V) か 0 (0V) のどちらかにはっきり決まり、定常状態ではほとんど電流が流れません。
+        NAND は pMOS 2 個を並列、nMOS 2 個を直列につないだもので、A と B が両方 1 のときだけ GND への道ができて出力が 0 になります。</p>
+      <p><b>NAND だけで全部作れる</b>: NOT A = NAND(A, A)、AND = NOT(NAND)、OR = NAND(NOT A, NOT B) (ド・モルガンの法則)。
+        AND と OR と NOT が作れれば、どんな真理値表でも作れるので、NAND (または NOR) 1 種類で
+        CPU 全体が組み立てられます。実際のチップでも NAND/NOR 系のセルが基本部品です。下は NAND 3 個で作った OR です。</p>
+      <div class="split2">
+        <div class="sch-wrap" id="nandOr"></div>
+        <div><table class="kv tt" id="nandOrTT"></table></div>
+      </div>
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>NOT の A を切り替えて、pMOS と nMOS が <em>交互に</em> 導通することを確かめる。</li>
+          <li>NAND で A=1, B=1 のときだけ、nMOS 2 個が両方つながって出力が GND (0V) に落ちるのを見る。</li>
+          <li>NAND で A=1, B=0 のとき、nMOS の間の節点 (X) が「どこにもつながっていない (浮いている)」状態になるのを見る。</li>
+          <li>NAND 3 個の回路の真理値表が OR と同じになるか確かめる。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 2. 基本ゲート ======================= -->
+<section class="sec" id="s2">
+  <h2><span class="num">2.</span>基本ゲート</h2>
+  <div class="panel">
+    <div class="cards" id="gateCards"></div>
+    <div class="try"><b>試してみよう</b>
+      <ul class="notes">
+        <li>それぞれの A, B を切り替え、真理値表の今の行 (色付き) と出力ランプが一致するか見る。</li>
+        <li>XOR は「2 つが違うとき 1」。1 ビットの足し算の 1 の位 (1+1=10 の 0) と同じです (→ 次の加算器)。</li>
+        <li>NAND と NOR の出力は AND と OR をちょうど反転したもの (記号の先の小さな丸 ○ が反転)。</li>
+        <li>Verilog ではそれぞれ <code>~a</code> <code>a &amp; b</code> <code>a | b</code> <code>a ^ b</code> と書きます。
+          <code>alu.v</code> の <code>`ALU_AND: r = a &amp; b;</code> は、このゲートが 64 個並んだものです。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 3. 加算器 ======================= -->
+<section class="sec" id="s3">
+  <h2><span class="num">3.</span>半加算器 → 全加算器 → 4 ビット リップルキャリー加算器</h2>
+  <div class="grid">
+    <div class="panel">
+      <h3>半加算器 (half adder)</h3>
+      <div class="sch-wrap" id="half"></div>
+      <p>1 ビット同士の足し算。S (和) = A XOR B、C (桁上げ) = A AND B。1 + 1 = 10<sub>2</sub> なので S=0, C=1。
+        ただし下の桁からの桁上げを受け取れないので、2 ビット目以降には使えません。</p>
+    </div>
+    <div class="panel">
+      <h3>全加算器 (full adder)</h3>
+      <div class="sch-wrap" id="full"></div>
+      <div class="timebar" id="fullTime"></div>
+      <table class="kv tt" id="fullTT"></table>
+    </div>
+    <div class="panel wide">
+      <h3>4 ビット リップルキャリー加算器</h3>
+      <div class="toolbar">
+        <label>A <input class="num" type="number" id="addA" min="-8" max="15" value="5"></label>
+        <label>B <input class="num" type="number" id="addB" min="-8" max="15" value="-1"></label>
+        <button class="primary" id="addGo">計算</button>
+        <button id="add51">5 + (−1)</button>
+        <button id="addWorst" title="1110 + 0000 + Cin=1 の状態から A の bit0 を 1 にする">最長経路 (A0 を変える)</button>
+        <button id="add71">7 + 1 (符号付きのあふれ)</button>
+        <button id="add00">0 + 0</button>
+      </div>
+      <div class="split2">
+        <div class="sch-wrap" id="rca"></div>
+        <div>
+          <div class="timebar" id="rcaTime"></div>
+          <table class="kv readout" id="rcaTable"></table>
+          <p id="rcaNote"></p>
+          <h3 style="margin-top:12px">2 の補数と符号拡張</h3>
+          <p>4 ビットで負の数を表すとき、<code>1111</code> を −1、<code>1000</code> を −8 とみなします
+            (最上位ビットの重みを +8 ではなく −8 にする)。これが <b>2 の補数</b>。−x は「全ビット反転して +1」で作れます
+            (0001 → 1110 → 1111 = −1)。うれしいのは、<b>符号付きでも符号なしでも、同じ加算器がそのまま使える</b> こと。
+            5 + 15 = 20 = 1_0100<sub>2</sub> の下位 4 ビットは 0100 = 4 で、これは 5 + (−1) = 4 そのものです (あふれた Cout は捨てる)。</p>
+          <p><b>符号拡張</b>: 4 ビットの −1 (<code>1111</code>) を 8 ビットにするときは、最上位ビット (符号) をコピーして
+            <code>1111_1111</code> にします (0 で埋めると 15 になってしまう)。今の B を 8 ビットに符号拡張すると
+            <code id="sext"></code>。
+            <code>hw</code> の即値生成器 <code>immgen.v</code> の <code>{{52{s}}, inst[31:20]}</code> がまさにこれで、
+            <code>addi a0, a0, -1</code> (= <code>0xfff50513</code>) の 12 ビット即値 <code>0xfff</code> が
+            64 ビットの <code>0xffff_ffff_ffff_ffff</code> (= −1) になり、ALU が 5 + 0xffff…ffff = 4 (桁あふれ) を計算します。</p>
+          <p class="links">→ <a target="_blank" rel="noopener" data-gh="hw/README.md#波形を読む-addi-a0-a0--1--0xfff50513">hw/README「波形を読む: addi a0, a0, -1」</a>、
+            <a target="_blank" rel="noopener" data-gh="hw/rtl/immgen.v#L18">immgen.v</a>、
+            <a target="_blank" rel="noopener" data-gh="hw/rtl/alu.v#L27">alu.v の <code>`ALU_ADD: r = a + b;</code></a></p>
+        </div>
+      </div>
+      <h3 style="margin-top:12px">クリティカルパスとクロック周期</h3>
+      <p>ゲートは入力が変わってから出力が変わるまで少し時間 (ゲート遅延) がかかります。このページでは全ゲートの遅延を 1 としています。
+        ビット i の桁上げ c<sub>i+1</sub> は c<sub>i</sub> が決まるまで決まらないので、桁上げが下の桁から順に <b>波のように (ripple)</b> 伝わります。
+        最も長い経路 (<b>クリティカルパス</b>) は A0 → p0 → t0 → c1 → t1 → c2 → … → c4 で、n ビットなら 2n + 1 ゲート遅延
+        (4 ビットで 9)。途中の S は一瞬まちがった値になり (グリッチ)、最後に落ち着きます。</p>
+      <p>CPU はこの「落ち着くまで」をクロックの立ち上がりまでに終わらせる必要があります。
+        <a target="_blank" rel="noopener" data-gh="hw/README.md#データパス-単一サイクル版">hw/README のデータパス</a> にある通り、単一サイクル CPU では
+        「pc → 命令 RAM → デコーダ → レジスタ → ALU → データ RAM → 書き戻し」の全部が 1 クロックの中に入るので、最長経路がクロック周期を決めます。
+        たとえば 1 ゲート 20 ps とすると、64 ビットのリップルキャリー加算器だけで 129 × 20 ps ≈ 2.6 ns (≈ 390 MHz が上限)。
+        実際の CPU は桁上げを先読みする加算器 (carry-lookahead など) で経路を log n 程度に縮め、さらに
+        <a target="_blank" rel="noopener" data-gh="hw/README.md#5-段パイプライン版-rtlcore_pipev">パイプライン</a> で 1 クロックの仕事を短く切ってクロックを上げます。</p>
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>「5 + (−1)」を押す。B = 1111 で、桁上げが bit0 から bit3 まで順に 1 になり、S = 0100 = 4、Cout = 1 になる (Cout は捨てる)。</li>
+          <li>「最長経路」を押して、安定までの時間が 9 ゲート遅延になることを確認。アニメーションを「ゆっくり」にすると桁上げの波が見えます。</li>
+          <li>S3 が一度 1 になってから 0 に戻る (グリッチ) のを探す。クロックの立ち上がりまでに落ち着けば問題ありません。</li>
+          <li>「7 + 1」: 符号なしでは 8 で正しいが、符号付きでは +7 + 1 = −8 になる (符号付きオーバーフロー)。</li>
+          <li>左の Cin を 1 にすると A + B + 1。B を全ビット反転して Cin = 1 にすれば A − B になります (<code>alu.v</code> の <code>a - b</code> の作り方)。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 4. マルチプレクサ ======================= -->
+<section class="sec" id="s4">
+  <h2><span class="num">4.</span>マルチプレクサ (どちらかを選ぶ回路)</h2>
+  <div class="grid">
+    <div class="panel">
+      <h3>2:1 マルチプレクサ</h3>
+      <div class="sch-wrap" id="mux1"></div>
+      <p><code>y = s ? b : a</code>。s = 0 なら上の AND だけが開いて a が通り、s = 1 なら下の AND が開いて b が通ります。
+        Verilog の <code>? :</code> (条件演算子) や <code>case</code> は、合成するとこの回路になります。</p>
+      <table class="kv tt" id="mux1TT"></table>
+    </div>
+    <div class="panel">
+      <h3>4 ビット 2:1 マルチプレクサ = ALU の入力 B (<code>b_sel</code>)</h3>
+      <div class="toolbar">
+        <button id="muxAddi">addi a0, a0, -1 (b_sel=1)</button>
+        <button id="muxAdd">add a0, a0, a1 (b_sel=0)</button>
+      </div>
+      <div class="sch-wrap" id="mux4"></div>
+      <p class="readout" id="mux4Out"></p>
+      <p>2:1 マルチプレクサをビットの数だけ並べ、選択線 <code>b_sel</code> を全部に配ったものです。
+        <code>hw</code> のコアでは <code>alu_b = (b_sel == `B_IMM) ? imm : rs2_val;</code> (64 ビット)。
+        デコーダが命令を見て <code>b_sel</code> を決めます: <code>add</code> なら レジスタ rs2、<code>addi</code>/<code>lw</code>/<code>sw</code> なら即値。</p>
+      <p class="links">→ <a target="_blank" rel="noopener" data-gh="hw/rtl/core.v#L98">core.v の alu_b</a>、
+        <a target="_blank" rel="noopener" data-gh="hw/README.md#制御信号の表">hw/README「制御信号の表」</a>、
+        <a href="../hw/">CPU データパスのページ</a></p>
+    </div>
+    <div class="panel wide">
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>2:1 マルチプレクサで s を切り替え、選ばれていない側の入力をいくら変えても y が変わらないことを確かめる。</li>
+          <li>「addi」を押すと b_sel = 1 で即値 1111 (−1 の下位 4 ビット) が ALU に入り、「add」では rs2 (a1) の値が入る。</li>
+          <li>s を変えたとき、NOT を通る分だけ上の AND が遅れて変わり、y が一瞬 0 になる (グリッチ) ことがある。アニメーションをゆっくりにして探そう。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 5. デコーダ ======================= -->
+<section class="sec" id="s5">
+  <h2><span class="num">5.</span>命令デコーダ (opcode → 制御信号)</h2>
+  <div class="grid">
+    <div class="panel wide">
+      <div class="toolbar" id="decPresets"></div>
+      <div class="bits" id="decBits"></div>
+      <p class="readout" id="decInfo"></p>
+    </div>
+    <div class="panel wide"><div class="split2">
+    <div>
+      <h3>opcode の一致検出 (AND 平面)</h3>
+      <div class="sch-wrap" id="dec"></div>
+      <p>上のスイッチが <code>inst[6:0]</code> (opcode)。各ビットとその反転 (NOT) を縦に走らせ、
+        横の行が 7 入力 AND です。丸い接点が「その行が見るビット」で、opcode が 1 の桁は元の線、0 の桁は反転した線につないであります。
+        7 個の接点が全部 1 のときだけ、その行の出力が 1 になります。例えば <code>is_load</code> は
+        <code>~i6 &amp; ~i5 &amp; ~i4 &amp; ~i3 &amp; ~i2 &amp; i1 &amp; i0</code> (= 0000011)。</p>
+    </div>
+    <div>
+      <h3>制御信号 (OR 平面)</h3>
+      <table class="kv" id="ctlTable"></table>
+      <p class="muted" style="font-size:12px">* <code>ecall</code> (system) の <code>reg_we</code> は命令語全体が <code>0x00000073</code> のときだけ (ここでは省略)。
+        load/store の funct3 による <code>illegal</code> も省略しています。</p>
+      <h3 style="margin-top:10px">decoder.v の対応する行</h3>
+      <pre class="code" id="decSrc"></pre>
+      <p class="links">→ <a target="_blank" rel="noopener" data-gh="hw/rtl/decoder.v#L64">decoder.v</a>、
+        <a target="_blank" rel="noopener" data-gh="hw/rtl/defs.vh#L9">defs.vh の OPC_*</a>、
+        <a target="_blank" rel="noopener" data-gh="hw/README.md#制御信号の表">制御信号の表</a>、
+        <a target="_blank" rel="noopener" data-gh="GLOSSARY.md#cpu-と命令セット">用語集「opcode / funct3 / funct7」「命令形式」</a></p>
+    </div>
+    </div></div>
+    <div class="panel wide">
+      <p><code>decoder.v</code> は <code>case (opcode)</code> と <code>always @(*)</code> で書かれていますが、合成ツールはこれを
+        「opcode を比べる AND の行」+「どの行で 1 にするかを集める OR」という 2 段の論理に直します。
+        <code>always @(*)</code> の先頭で全部の信号を 0 にしているのは、書き忘れた信号を 0 にする (= OR に入れない) ため。
+        クロックは無いので、命令が変わると数ゲート遅延で全部の制御信号が変わります。</p>
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>プリセットの <code>addi</code> (<code>0xfff50513</code>) を押す。<code>is_op_imm</code> が 1 になり、<code>reg_we</code> と <code>b_sel</code> が 1、<code>mem_*</code> は 0。hw/README の波形の行と同じです。</li>
+          <li><code>lw</code> → <code>mem_read</code> と <code>wb_sel=MEM</code>、<code>sw</code> → <code>mem_write</code> だけで <code>reg_we=0</code>。</li>
+          <li><code>beq</code> と <code>jal</code> で <code>a_sel=PC</code> になる (飛び先 pc + imm を ALU で計算するため)。</li>
+          <li>opcode のビットを 1 つ手で変えて、どの行にも当たらず <code>illegal</code> が 1 になる opcode を探す。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 6. フリップフロップ ======================= -->
+<section class="sec" id="s6">
+  <h2><span class="num">6.</span>ラッチ → フリップフロップ → レジスタ</h2>
+  <div class="grid">
+    <div class="panel">
+      <h3>D ラッチ (NAND 4 個 + NOT)</h3>
+      <div class="sch-wrap" id="latch"></div>
+      <p>E = 1 の間は Q = D (素通し)、E = 0 にすると Q は直前の値を <b>覚え続けます</b>。
+        右の 2 つの NAND が互いの出力を入力に戻している (たすきがけ) のが記憶の正体です。</p>
+    </div>
+    <div class="panel">
+      <h3>D フリップフロップ (マスタ・スレーブ)</h3>
+      <div class="toolbar">
+        <button id="dffD">D を切り替え</button>
+        <button id="dffClk">CLK を切り替え</button>
+        <button class="primary" id="dffPulse">クロック ↑↓</button>
+        <button id="dffClear">波形を消す</button>
+      </div>
+      <div class="sch-wrap" id="dff"></div>
+      <div class="sch-wrap" id="dffWave"></div>
+      <div class="log" id="dffLog"></div>
+      <p>D ラッチを 2 つつなぎ、前段 (マスタ) は CLK = 0 の間、後段 (スレーブ) は CLK = 1 の間だけ素通しにします。
+        どの瞬間も片方は閉じているので、D が Q まで素通りすることはなく、<b>CLK が 0 → 1 になる瞬間 (立ち上がりエッジ)</b> の D だけが Q に入ります。
+        Verilog の <code>always @(posedge clk) q &lt;= d;</code> がこれです。</p>
+    </div>
+    <div class="panel wide">
+      <h3>4 ビット レジスタ (書き込みイネーブル付き)</h3>
+      <div class="toolbar">
+        <button class="primary" id="regPulse">クロック ↑↓</button>
+        <button id="regSet5">d = 0101, we = 1</button>
+        <button id="regSet4">d = 0100, we = 0</button>
+      </div>
+      <div class="split2">
+        <div class="sch-wrap" id="reg"></div>
+        <div>
+          <p class="readout big" id="regOut"></p>
+          <p>各ビットは D フリップフロップ 1 個。その前に 2:1 マルチプレクサを置き、<code>we = 0</code> なら自分の出力 q を、
+            <code>we = 1</code> なら新しい値 d を D に入れます。だから we = 0 のときはクロックが来ても値が変わりません。</p>
+          <p><code>hw</code> のレジスタファイルはこれを 64 ビット × 31 本 (x0 は常に 0) 並べたもので、書き込みはこの 2 行です:</p>
+          <pre class="code"><span><span class="ln">27</span>always @(posedge clk) begin</span><span><span class="ln">28</span>    if (we &amp;&amp; rd != 5'd0)</span><span><span class="ln">29</span>        regs[rd] &lt;= rd_val;</span></pre>
+          <p><code>addi a0, a0, -1</code> では、ALU の出力 4 がこのサイクルのうちに <code>rd_val</code> まで届いて待っていて、
+            <b>次の立ち上がりエッジ</b> で a0 が 5 → 4 に変わります (hw/README の波形で <code>x_a0</code> が次の行で変わるのはこのため)。</p>
+          <p class="links">→ <a target="_blank" rel="noopener" data-gh="hw/rtl/regfile.v#L27">regfile.v</a>、
+            <a target="_blank" rel="noopener" data-gh="hw/README.md#データパス-単一サイクル版">「クロックの立ち上がりエッジで起きるのは 3 つだけ」</a></p>
+        </div>
+      </div>
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>D フリップフロップで CLK = 1 のまま D を何度変えても Q は変わらない。CLK = 0 にしても変わらない。0 → 1 にした瞬間だけ Q が D になる。</li>
+          <li>波形の縦の点線 (立ち上がりエッジ) の位置でだけ Q が変化していることを確かめる。</li>
+          <li>D ラッチで E = 1 のまま D を切り替えると Q がついてくる (素通し)。これがエッジで取り込むフリップフロップとの違い。</li>
+          <li>レジスタで we = 0 のままクロックを入れても q は変わらない。we = 1 にしてからクロックを入れると d が入る。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 7. ALU スライス ======================= -->
+<section class="sec" id="s7">
+  <h2><span class="num">7.</span>1 ビット ALU スライスを 4 つつなぐ</h2>
+  <div class="grid">
+    <div class="panel wide">
+      <div class="toolbar">
+        <label>A <input class="num" type="number" id="aluA" min="-8" max="15" value="6"></label>
+        <label>B <input class="num" type="number" id="aluB" min="-8" max="15" value="3"></label>
+        <label>演算 <select id="aluOp">
+          <option value="0">AND (op=00)</option>
+          <option value="1">OR (op=01)</option>
+          <option value="2" selected>ADD (op=10)</option>
+          <option value="3">SUB (op=11)</option>
+        </select></label>
+        <button class="primary" id="aluGo">計算</button>
+      </div>
+      <div class="split2">
+        <div class="sch-wrap" id="alu"></div>
+        <div>
+          <div class="timebar" id="aluTime"></div>
+          <table class="kv readout" id="aluTable"></table>
+          <p>各スライスは 1 ビット分の AND・OR・全加算器を <b>全部同時に</b> 計算しておき、最後に op で選んだ 1 つだけを
+            4:1 マルチプレクサで出力します (使わない結果は捨てる)。SUB のときは B を XOR で反転し、最下位の桁上げ入力を 1 にして
+            A + ~B + 1 = A − B を作ります (2 の補数)。<code>alu.v</code> の <code>case (alu_op)</code> も、合成すると
+            「全部の演算器を並べて最後にマルチプレクサで選ぶ」形になります。</p>
+          <p class="links">→ <a target="_blank" rel="noopener" data-gh="hw/rtl/alu.v#L25">alu.v</a>、
+            <a target="_blank" rel="noopener" data-gh="hw/rtl/defs.vh">defs.vh の ALU_*</a></p>
+        </div>
+      </div>
+      <div class="try"><b>試してみよう</b>
+        <ul class="notes">
+          <li>op を AND → OR → ADD と変えて、同じ A, B から違う結果が選ばれるのを見る (AND / OR は桁上げを待たないので速く落ち着く)。</li>
+          <li>SUB で 5 − 6 を計算すると 1111 = −1。B の反転と、最下位の桁上げ 1 を確かめる。</li>
+          <li>ADD と SUB で安定までの時間を比べる。SUB は B の反転 (XOR) の分だけ長い。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+'use strict';
+const GH = 'https://github.com/hashrock/low-level-study/blob/main/';
+const SVGNS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+window.addEventListener('error', e => { $('error').textContent += (e.message || e) + '\n'; });
+
+// SIM-BEGIN
+// ====================================================================
+// イベント駆動の論理シミュレータ
+//
+// 回路は「net (配線, 値は 0/1)」と「ゲート (入力 net → 出力 net, 遅延付き)」でできている。
+// net の値が変わると、その net を入力に持つゲートだけを評価し直し、
+// 出力の新しい値を「今の時刻 + そのゲートの遅延」に届くイベントとして予約する。
+// 時刻の早い順にイベントを処理していけば、信号が遅延つきで伝わっていく様子が再現できる。
+// (Verilog シミュレータ iverilog も、規模は違うが同じ考え方で動いている)
+// ====================================================================
+const LOGIC = {
+  BUF:  x => x[0],
+  NOT:  x => 1 - x[0],
+  AND:  x => x.every(v => v === 1) ? 1 : 0,
+  OR:   x => x.some(v => v === 1) ? 1 : 0,
+  NAND: x => x.every(v => v === 1) ? 0 : 1,
+  NOR:  x => x.some(v => v === 1) ? 0 : 1,
+  XOR:  x => x.reduce((a, b) => a ^ b, 0),
+  XNOR: x => 1 - x.reduce((a, b) => a ^ b, 0),
+};
+
+class Sim {
+  constructor() {
+    this.v = {};          // net の今の値 (0/1)
+    this.future = {};     // その net に最後に予約した値。v と違えば「変化が向かっている途中」
+    this.fanout = {};     // net → その net を入力に持つゲートの一覧
+    this.gates = [];
+    this.queue = [];      // 予約されたイベント {t, net, val, seq}
+    this.t = 0;           // 今の時刻 (単位: ゲート遅延)
+    this.seq = 0;         // 同じ時刻のイベントを予約順に処理するための通し番号
+    this.t0 = 0;          // 最後に外から入力を変えた時刻
+    this.lastChange = 0;  // 最後にどれかの net の値が変わった時刻
+  }
+
+  // net を用意する (init は電源投入時の値。たすきがけのラッチでは矛盾しない値を与える)
+  net(name, init = 0) {
+    if (!(name in this.v)) {
+      this.v[name] = init; this.future[name] = init; this.fanout[name] = [];
+    }
+    return name;
+  }
+
+  // ゲートを 1 個追加する
+  gate(type, ins, out, delay = 1) {
+    if (!LOGIC[type]) throw new Error('未知のゲート: ' + type);
+    ins.forEach(n => this.net(n));
+    this.net(out);
+    const g = { type, ins, out, delay };
+    this.gates.push(g);
+    for (const n of new Set(ins)) this.fanout[n].push(g);
+    return g;
+  }
+
+  eval(g) { return LOGIC[g.type](g.ins.map(n => this.v[n])); }
+
+  // 「時刻 t に net を val にする」イベントを予約する。
+  // 既に同じ値になる予定なら予約しない (どの net も駆動するゲートは 1 個で遅延も一定なので、これで十分)
+  schedule(t, net, val) {
+    if (this.future[net] === val) return;
+    this.future[net] = val;
+    this.queue.push({ t, net, val, seq: this.seq++ });
+  }
+
+  // 回路を組み終えたら 1 回呼ぶ: 全ゲートを評価して初期値の矛盾を解消する
+  init() {
+    for (const g of this.gates) this.schedule(this.t, g.out, this.eval(g));
+    this.settle();
+    this.t0 = this.lastChange = this.t;
+  }
+
+  // 外から入力 (スイッチ) を変える。実際に反映されるのは次の step()
+  set(net, val) {
+    this.net(net);
+    this.t0 = this.lastChange = this.t;
+    this.schedule(this.t, net, val ? 1 : 0);
+  }
+
+  get(net) { return this.v[net]; }
+  busy() { return this.queue.length > 0; }
+  changing(net) { return this.future[net] !== this.v[net]; }
+
+  // 一番早い時刻のイベントを全部処理して、時計をその時刻まで進める。
+  // イベントが無ければ false (回路は落ち着いている)
+  step() {
+    if (!this.queue.length) return false;
+    this.queue.sort((a, b) => a.t - b.t || a.seq - b.seq);
+    const t = this.queue[0].t;
+    this.t = t;
+    // 1) この時刻に届くイベントを全部反映する (処理前の値を覚えておく)
+    const before = new Map();
+    while (this.queue.length && this.queue[0].t === t) {
+      const e = this.queue.shift();
+      if (!before.has(e.net)) before.set(e.net, this.v[e.net]);
+      this.v[e.net] = e.val;
+    }
+    // 2) 実際に値が変わった net だけを集める
+    const changed = [...before].filter(([n, old]) => this.v[n] !== old).map(([n]) => n);
+    if (changed.length) this.lastChange = t;
+    // 3) 変わった net を入力に持つゲートを評価し、遅延のあとに出力が変わるよう予約する
+    const seen = new Set();
+    for (const n of changed) {
+      for (const g of this.fanout[n]) {
+        if (seen.has(g)) continue;
+        seen.add(g);
+        this.schedule(t + g.delay, g.out, this.eval(g));
+      }
+    }
+    return true;
+  }
+
+  // イベントが無くなるまで進める (フィードバックで発振する回路への安全装置つき)
+  settle(limit = 100000) {
+    while (this.step()) {
+      if (--limit <= 0) throw new Error('回路が落ち着きません (発振している?)');
+    }
+  }
+
+  // 入力を変えてから、最後にどれかの値が変わるまでの時間 = 出力が安定するまでの遅延
+  settleTime() { return this.lastChange - this.t0; }
+}
+
+// ---- よく使う部品 (ゲートの組み合わせ) ----
+// 2:1 マルチプレクサ: y = s ? a1 : a0
+function buildMux(sim, a0, a1, s, y, p) {
+  sim.gate('NOT', [s], p + 'ns');
+  sim.gate('AND', [a0, p + 'ns'], p + 'x0');
+  sim.gate('AND', [a1, s], p + 'x1');
+  sim.gate('OR', [p + 'x0', p + 'x1'], y);
+}
+// 全加算器: s = a ^ b ^ c, co = (a & b) | ((a ^ b) & c)
+function buildFA(sim, a, b, c, s, co, p) {
+  sim.gate('XOR', [a, b], p + 'p');
+  sim.gate('AND', [a, b], p + 'g');
+  sim.gate('XOR', [p + 'p', c], s);
+  sim.gate('AND', [p + 'p', c], p + 't');
+  sim.gate('OR', [p + 't', p + 'g'], co);
+}
+// D ラッチ (NAND 4 個 + NOT): e = 1 の間 q = d、e = 0 で保持。
+// たすきがけの 2 個は初期値を q=0, qn=1 にしておく (でないと電源投入時に発振する)
+function buildDLatch(sim, d, e, q, p) {
+  sim.net(p + 'nd', 1); sim.net(p + 's', 1); sim.net(p + 'r', 1);
+  sim.net(q, 0); sim.net(p + 'qn', 1);
+  sim.gate('NOT', [d], p + 'nd');
+  sim.gate('NAND', [d, e], p + 's');
+  sim.gate('NAND', [p + 'nd', e], p + 'r');
+  sim.gate('NAND', [p + 's', p + 'qn'], q);
+  sim.gate('NAND', [p + 'r', q], p + 'qn');
+}
+// D フリップフロップ (マスタ・スレーブ): clk の立ち上がりで q ← d
+function buildDFF(sim, d, clk, q, p) {
+  sim.net(p + 'nclk', 1);
+  sim.gate('NOT', [clk], p + 'nclk');
+  buildDLatch(sim, d, p + 'nclk', p + 'qm', p + 'm.');
+  buildDLatch(sim, p + 'qm', clk, q, p + 's.');
+}
+// SIM-END
+
+// ====================================================================
+// 画面側: 回路 (Circuit) = シミュレータ + 描画 + アニメーション
+// ====================================================================
+const UI = { anim: true, stepMs: 220 };
+const circuits = {};
+window.gates = { circuits, UI, Sim };
+
+class Circuit {
+  constructor(name) {
+    this.name = name;
+    this.sim = new Sim();
+    this.roots = [];
+    this.els = [];
+    this.hooks = [];       // 描画のたびに呼ぶ
+    this.settled = [];     // 落ち着いたときに呼ぶ
+    this.waiters = [];
+    this.timer = null;
+    this.maxTime = 0;
+    circuits[name] = this;
+  }
+  ready() {
+    this.sim.init();
+    this.els = this.roots.flatMap(r => [...r.querySelectorAll('[data-net]')]);
+    this.render();
+  }
+  render() {
+    const s = this.sim;
+    for (const el of this.els) {
+      const n = el.dataset.net, v = s.v[n], x = s.changing(n);
+      el.classList.toggle('v1', !x && v === 1);
+      el.classList.toggle('v0', !x && v === 0);
+      el.classList.toggle('vx', x);
+      if (el.hasAttribute('data-txt')) el.textContent = v;
+    }
+    for (const f of this.hooks) f(this);
+  }
+  get(n) { return this.sim.v[n]; }
+  // 複数の入力を同時に変えて、落ち着くまで (アニメーションしながら) 進める
+  apply(vals) {
+    for (const [n, v] of Object.entries(vals)) this.sim.set(n, v);
+    return this.run();
+  }
+  toggle(n) { return this.apply({ [n]: 1 - this.sim.future[n] }); }
+  // アニメーション無しで即座に反映 (プリセットの準備やテスト用)
+  applyNow(vals) {
+    for (const [n, v] of Object.entries(vals)) this.sim.set(n, v);
+    this.sim.settle();
+    this.maxTime = Math.max(this.maxTime, this.sim.settleTime());
+    this.render();
+  }
+  run() {
+    return new Promise(res => { this.waiters.push(res); this.kick(); });
+  }
+  kick() {
+    if (this.timer) return;
+    const tick = () => {
+      this.timer = null;
+      if (UI.anim) this.sim.step(); else this.sim.settle();
+      this.render();
+      if (this.sim.busy()) { this.timer = setTimeout(tick, UI.stepMs); return; }
+      this.maxTime = Math.max(this.maxTime, this.sim.settleTime());
+      this.render();
+      for (const f of this.settled) f(this);
+      const w = this.waiters; this.waiters = [];
+      w.forEach(f => f());
+    };
+    tick();
+  }
+  timeText() {
+    const s = this.sim, el = s.t - s.t0;
+    return s.busy()
+      ? `<span class="busy">伝搬中… t = ${el}</span>`
+      : `<span>安定: 入力を変えてから <b>${s.settleTime()}</b> ゲート遅延</span><span class="muted">これまでの最長 ${this.maxTime}</span>`;
+  }
+}
+
+// ---- SVG の描画ヘルパ ----
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+class Board {
+  // parent の中に viewBox w×h の SVG を作る。minW: これより狭くなるならパネル内で横スクロール
+  constructor(circuit, parent, w, h, o = {}) {
+    this.c = circuit;
+    this.sim = circuit ? circuit.sim : null;
+    this.svg = svgEl('svg', { class: 'sch', viewBox: `0 0 ${w} ${h}`, role: 'img', 'aria-label': o.label || '回路図' }, parent);
+    this.svg.style.maxWidth = (o.maxW || Math.round(w * 1.35)) + 'px';
+    if (o.minW) this.svg.style.minWidth = o.minW + 'px';
+    this.layer = { w: svgEl('g', {}, this.svg), g: svgEl('g', {}, this.svg), t: svgEl('g', {}, this.svg) };
+    if (circuit) circuit.roots.push(this.svg);
+  }
+  wire(net, pts) {
+    return svgEl('polyline', { class: 'w', 'data-net': net, points: pts.map(p => p.join(',')).join(' ') }, this.layer.w);
+  }
+  dot(net, x, y) { return svgEl('circle', { class: 'dot', 'data-net': net, cx: x, cy: y, r: 3 }, this.layer.g); }
+  text(x, y, s, cls, anchor = 'start', parent) {
+    const t = svgEl('text', { x, y, class: cls, 'text-anchor': anchor }, parent || this.layer.t);
+    t.textContent = s;
+    return t;
+  }
+  // 論理ゲートの記号を描いて、シミュレータにもゲートを追加する。
+  // 戻り値: 入力ピン座標の配列 in と出力ピン座標 out
+  gate(type, x, y, ins, out, o = {}) {
+    if (this.sim && !o.drawOnly) this.sim.gate(type, ins, out, o.delay ?? 1);
+    const n = ins.length, W = 36;
+    const H = n === 1 ? 24 : Math.max(28, n * 10 + 8);
+    const pins = ins.map((_, i) => y + H / 2 + (i - (n - 1) / 2) * 10);
+    const g = svgEl('g', { class: 'gate', 'data-net': out }, this.layer.g);
+    const inv = /^(NOT|NAND|NOR|XNOR)$/.test(type);
+    let body, ox, curve = 0;
+    if (n === 1) {
+      body = `M${x},${y} L${x + 28},${y + H / 2} L${x},${y + H} Z`;
+      ox = x + 28;
+    } else if (/AND$/.test(type) && type !== 'XNOR' || type === 'NAND') {
+      const f = W - H / 2;
+      body = `M${x},${y} h${f} a${H / 2},${H / 2} 0 0 1 0,${H} h${-f} Z`;
+      ox = x + W;
+    } else {  // OR / NOR / XOR / XNOR
+      const sh = /^X/.test(type) ? 6 : 0, bx = x + sh, bw = W - sh;
+      body = `M${bx},${y} Q${bx + bw * .55},${y} ${bx + bw},${y + H / 2} Q${bx + bw * .55},${y + H} ${bx},${y + H} Q${bx + 12},${y + H / 2} ${bx},${y} Z`;
+      if (sh) svgEl('path', { class: 'back', d: `M${x},${y} Q${x + 12},${y + H / 2} ${x},${y + H}` }, g);
+      ox = x + W; curve = 12;
+    }
+    // 入力ピンから本体の曲線までの短い線
+    ins.forEach((nn, i) => {
+      const s = (pins[i] - y) / H, d = 2 * s * (1 - s) * curve;
+      if (d > 0.5) this.wire(nn, [[x, pins[i]], [x + d, pins[i]]]);
+    });
+    svgEl('path', { d: body }, g);
+    if (inv) { svgEl('circle', { cx: ox + 3, cy: y + H / 2, r: 3 }, g); ox += 6; }
+    if (o.label) this.text(x + W / 2, y - 4, o.label, 'sm', 'middle');
+    return { in: pins.map(py => [x, py]), out: [ox, y + H / 2] };
+  }
+  // クリックで 0/1 が切り替わる入力スイッチ
+  toggle(net, x, y, label, o = {}) {
+    if (this.sim) this.sim.net(net);
+    const g = svgEl('g', { class: 'tog', 'data-net': net, tabindex: 0, role: 'button', 'aria-label': `${label || net} を切り替え` }, this.layer.g);
+    svgEl('rect', { x: x - 11, y: y - 11, width: 22, height: 22, rx: 4 }, g);
+    const t = svgEl('text', { x, y: y + 1, 'data-net': net, 'data-txt': '' }, g);
+    t.textContent = '0';
+    if (label) {
+      if (o.pos === 'top') this.text(x, y - 15, label, 'lbl', 'middle');
+      else if (o.pos === 'bottom') this.text(x, y + 24, label, 'lbl', 'middle');
+      else this.text(x - 15, y + 4, label, 'lbl', 'end');
+    }
+    const act = () => { const f = o.onToggle ? o.onToggle : () => this.c.toggle(net); f(); };
+    g.addEventListener('click', act);
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+    return g;
+  }
+  // 出力ランプ
+  lamp(net, x, y, label, o = {}) {
+    const g = svgEl('g', { class: 'lamp', 'data-net': net }, this.layer.g);
+    svgEl('circle', { cx: x, cy: y, r: 9 }, g);
+    const t = svgEl('text', { x, y: y + 1, 'data-net': net, 'data-txt': '' }, g);
+    t.textContent = '0';
+    if (label) {
+      if (o.pos === 'top') this.text(x, y - 14, label, 'lbl', 'middle');
+      else if (o.pos === 'bottom') this.text(x, y + 22, label, 'lbl', 'middle');
+      else if (o.pos === 'left') this.text(x - 14, y + 4, label, 'lbl', 'end');
+      else this.text(x + 14, y + 4, label, 'lbl');
+    }
+    return g;
+  }
+}
+
+const bin = (v, n) => v.toString(2).padStart(n, '0');
+const signed = (v, n) => v >= 1 << (n - 1) ? v - (1 << n) : v;
+const bitsOf = (c, pre, n) => { let v = 0; for (let i = 0; i < n; i++) v |= c.get(pre + i) << i; return v; };
+const bitVals = (pre, v, n) => { const o = {}; for (let i = 0; i < n; i++) o[pre + i] = (v >> i) & 1; return o; };
+const sgn = v => v < 0 ? `−${-v}` : `${v}`;
+
+// 真理値表 (HTML) を作り、描画のたびに今の行を .current にする
+function truthTable(table, c, ins, outs, fn) {
+  const n = ins.length;
+  let h = '<tr>' + ins.map(i => `<th>${i}</th>`).join('') + outs.map(o => `<th>${o}</th>`).join('') + '</tr>';
+  for (let r = 0; r < 1 << n; r++) {
+    const iv = ins.map((_, k) => (r >> (n - 1 - k)) & 1);
+    const ov = fn(...iv);
+    h += `<tr data-row="${r}">` + iv.map(v => `<td>${v}</td>`).join('') + ov.map(v => `<td class="y">${v}</td>`).join('') + '</tr>';
+  }
+  table.innerHTML = h;
+  const rows = [...table.querySelectorAll('tr[data-row]')];
+  return nets => {
+    const r = nets.reduce((a, nn) => (a << 1) | c.get(nn), 0);
+    rows.forEach((tr, i) => tr.classList.toggle('current', i === r));
+  };
+}
+
+// ====================================================================
+// 1. CMOS トランジスタ
+// ====================================================================
+// トランジスタ 1 個を縦に描く。yA..yB が上下の端子、yc がチャネルの中心。mirror でゲートを右側に
+function mos(bd, type, cx, yc, yA, yB, nodeA, nodeB, mirror) {
+  const k = mirror ? -1 : 1, X = d => cx - k * d;
+  const L = bd.layer.w;
+  svgEl('polyline', { class: 'nd', 'data-node': nodeA, points: `${cx},${yA} ${cx},${yc - 10} ${X(12)},${yc - 10}` }, L);
+  svgEl('polyline', { class: 'nd', 'data-node': nodeB, points: `${X(12)},${yc + 10} ${cx},${yc + 10} ${cx},${yB}` }, L);
+  const ch = svgEl('line', { class: 'ch', x1: X(12), y1: yc - 14, x2: X(12), y2: yc + 14 }, bd.layer.g);
+  svgEl('line', { class: 'plate', x1: X(18), y1: yc - 10, x2: X(18), y2: yc + 10 }, bd.layer.g);
+  let pin = [X(18), yc];
+  if (type === 'p') { svgEl('circle', { class: 'plate', cx: X(21), cy: yc, r: 3 }, bd.layer.g); pin = [X(24), yc]; }
+  const tx = cx + k * 8, an = mirror ? 'end' : 'start';
+  bd.text(tx, yc - 2, type === 'p' ? 'pMOS' : 'nMOS', 'sm', an);
+  const st = bd.text(tx, yc + 11, 'OFF', 'off', an);
+  return { ch, pin, st };
+}
+function setMos(m, on) {
+  m.ch.classList.toggle('on', on);
+  m.st.textContent = on ? 'ON' : 'OFF';
+  m.st.setAttribute('class', on ? 'on' : 'off');
+}
+function setNodes(svg, vals) {
+  svg.querySelectorAll('[data-node]').forEach(e => {
+    const v = vals[e.dataset.node];
+    e.classList.toggle('v1', v === 1); e.classList.toggle('v0', v === 0); e.classList.toggle('vz', v === 'z');
+  });
+}
+function cmosToggle(bd, node, x, y, label, onClick) {
+  const g = svgEl('g', { class: 'tog', 'data-node-tog': node, tabindex: 0, role: 'button', 'aria-label': `${label} を切り替え` }, bd.layer.g);
+  svgEl('rect', { x: x - 11, y: y - 11, width: 22, height: 22, rx: 4 }, g);
+  const t = svgEl('text', { x, y: y + 1 }, g); t.textContent = '0';
+  bd.text(x, y - 15, label, 'lbl', 'middle');
+  g.addEventListener('click', onClick);
+  g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } });
+  return { g, t };
+}
+function setTog(tg, v) { tg.g.classList.toggle('v1', !!v); tg.g.classList.toggle('v0', !v); tg.t.textContent = v; }
+function cmosLamp(bd, x, y, label) {
+  const g = svgEl('g', { class: 'lamp' }, bd.layer.g);
+  svgEl('circle', { cx: x, cy: y, r: 9 }, g);
+  const t = svgEl('text', { x, y: y + 1 }, g);
+  bd.text(x, y - 14, label, 'lbl', 'middle');
+  return { g, t };
+}
+
+const cmosState = { notA: 0, nandA: 0, nandB: 0 };
+window.gates.cmos = cmosState;
+function buildCmosNot() {
+  const bd = new Board(null, $('cmosNot'), 290, 200, { label: 'CMOS NOT の回路図' });
+  svgEl('line', { class: 'rail', x1: 110, y1: 20, x2: 190, y2: 20 }, bd.layer.g);
+  bd.text(196, 24, 'VDD ≈ 1V', 'lbl');
+  svgEl('line', { class: 'rail', x1: 110, y1: 175, x2: 190, y2: 175 }, bd.layer.g);
+  bd.text(196, 179, 'GND 0V', 'lbl');
+  const p = mos(bd, 'p', 150, 55, 20, 95, 'vdd', 'y');
+  const n = mos(bd, 'n', 150, 135, 95, 175, 'y', 'gnd');
+  svgEl('polyline', { class: 'nd', 'data-node': 'y', points: '150,95 236,95' }, bd.layer.w);
+  svgEl('circle', { class: 'dot', 'data-node': 'y', cx: 150, cy: 95, r: 3 }, bd.layer.g);
+  svgEl('polyline', { class: 'nd', 'data-node': 'a', points: `41,95 70,95 70,55 ${p.pin[0]},55` }, bd.layer.w);
+  svgEl('polyline', { class: 'nd', 'data-node': 'a', points: `70,95 70,135 ${n.pin[0]},135` }, bd.layer.w);
+  const tg = cmosToggle(bd, 'a', 30, 95, 'A', () => { cmosState.notA ^= 1; draw(); });
+  const lp = cmosLamp(bd, 245, 95, 'Y');
+  function draw() {
+    const a = cmosState.notA, y = 1 - a;
+    setMos(p, !a); setMos(n, !!a);
+    setNodes(bd.svg, { vdd: 1, gnd: 0, y, a });
+    setTog(tg, a);
+    lp.g.classList.toggle('v1', !!y); lp.t.textContent = y;
+    $('cmosNotOut').innerHTML = a
+      ? 'A = 1 → nMOS が ON、pMOS が OFF → Y は GND につながる: <b>Y = 0 (0V)</b>'
+      : 'A = 0 → pMOS が ON、nMOS が OFF → Y は VDD につながる: <b>Y = 1 (≈1V)</b>';
+  }
+  draw();
+}
+function buildCmosNand() {
+  const bd = new Board(null, $('cmosNand'), 380, 260, { label: 'CMOS NAND の回路図' });
+  svgEl('line', { class: 'rail', x1: 100, y1: 20, x2: 280, y2: 20 }, bd.layer.g);
+  bd.text(190, 14, 'VDD ≈ 1V', 'lbl', 'middle');
+  svgEl('line', { class: 'rail', x1: 150, y1: 235, x2: 230, y2: 235 }, bd.layer.g);
+  bd.text(236, 239, 'GND 0V', 'lbl');
+  const pA = mos(bd, 'p', 130, 55, 20, 95, 'vdd', 'y');
+  const pB = mos(bd, 'p', 250, 55, 20, 95, 'vdd', 'y', true);
+  const nA = mos(bd, 'n', 190, 130, 95, 165, 'y', 'x');
+  const nB = mos(bd, 'n', 190, 200, 165, 235, 'x', 'gnd', true);
+  svgEl('polyline', { class: 'nd', 'data-node': 'y', points: '130,95 290,95' }, bd.layer.w);
+  svgEl('circle', { class: 'dot', 'data-node': 'y', cx: 190, cy: 95, r: 3 }, bd.layer.g);
+  bd.text(176, 170, 'X', 'sm', 'end');
+  svgEl('polyline', { class: 'nd', 'data-node': 'a', points: `36,130 60,130 60,55 ${pA.pin[0]},55` }, bd.layer.w);
+  svgEl('polyline', { class: 'nd', 'data-node': 'a', points: `60,130 ${nA.pin[0]},130` }, bd.layer.w);
+  svgEl('polyline', { class: 'nd', 'data-node': 'b', points: `344,130 330,130 330,55 ${pB.pin[0]},55` }, bd.layer.w);
+  svgEl('polyline', { class: 'nd', 'data-node': 'b', points: `330,130 330,200 ${nB.pin[0]},200` }, bd.layer.w);
+  const ta = cmosToggle(bd, 'a', 25, 130, 'A', () => { cmosState.nandA ^= 1; draw(); });
+  const tb = cmosToggle(bd, 'b', 355, 130, 'B', () => { cmosState.nandB ^= 1; draw(); });
+  const lp = cmosLamp(bd, 300, 95, 'Y');
+  function draw() {
+    const a = cmosState.nandA, b = cmosState.nandB, y = a && b ? 0 : 1;
+    setMos(pA, !a); setMos(pB, !b); setMos(nA, !!a); setMos(nB, !!b);
+    const x = b ? 0 : (a ? y : 'z');
+    setNodes(bd.svg, { vdd: 1, gnd: 0, y, a, b, x });
+    setTog(ta, a); setTog(tb, b);
+    lp.g.classList.toggle('v1', !!y); lp.t.textContent = y;
+    let why;
+    if (a && b) why = 'nMOS 2 個が両方 ON (直列の道がつながる)、pMOS は両方 OFF → <b>Y = 0 (0V)</b>';
+    else why = `pMOS ${!a && !b ? 'A と B' : !a ? 'A' : 'B'} が ON で Y は VDD につながる。nMOS の直列のどこかが OFF なので GND には行けない → <b>Y = 1 (≈1V)</b>` +
+      (x === 'z' ? '。節点 X はどこにもつながっていない (浮いている)' : '');
+    $('cmosNandOut').innerHTML = `A = ${a}, B = ${b}: ` + why;
+  }
+  draw();
+}
+function buildNandOr() {
+  const c = new Circuit('nandOr');
+  const bd = new Board(c, $('nandOr'), 300, 140, { label: 'NAND 3 個で作る OR' });
+  bd.toggle('a', 25, 30, 'A');
+  bd.toggle('b', 25, 100, 'B');
+  const g1 = bd.gate('NAND', 80, 21, ['a', 'a'], 'na', { label: 'NOT A' });
+  const g2 = bd.gate('NAND', 80, 91, ['b', 'b'], 'nb', { label: 'NOT B' });
+  const g3 = bd.gate('NAND', 180, 56, ['na', 'nb'], 'y');
+  bd.wire('a', [[36, 30], [80, 30]]); bd.wire('a', [[60, 30], [60, 40], [80, 40]]); bd.dot('a', 60, 30);
+  bd.wire('b', [[36, 100], [80, 100]]); bd.wire('b', [[60, 100], [60, 110], [80, 110]]); bd.dot('b', 60, 100);
+  bd.wire('na', [g1.out, [150, 35], [150, 65], g3.in[0]]);
+  bd.wire('nb', [g2.out, [160, 105], [160, 75], g3.in[1]]);
+  bd.wire('y', [g3.out, [262, 70]]);
+  bd.lamp('y', 271, 70, 'Y', { pos: 'top' });
+  const tt = truthTable($('nandOrTT'), c, ['A', 'B'], ['Y', 'A|B'], (a, b) => [a | b, a | b]);
+  c.hooks.push(() => tt(['a', 'b']));
+  c.ready();
+}
+
+// ====================================================================
+// 2. 基本ゲート
+// ====================================================================
+const GATE_INFO = [
+  ['NOT', 'Y = ¬A', '~a', a => 1 - a],
+  ['AND', 'Y = A · B', 'a & b', (a, b) => a & b],
+  ['OR', 'Y = A + B', 'a | b', (a, b) => a | b],
+  ['XOR', 'Y = A ⊕ B', 'a ^ b', (a, b) => a ^ b],
+  ['NAND', 'Y = ¬(A · B)', '~(a & b)', (a, b) => 1 - (a & b)],
+  ['NOR', 'Y = ¬(A + B)', '~(a | b)', (a, b) => 1 - (a | b)],
+];
+function buildGateCards() {
+  for (const [type, expr, vl, fn] of GATE_INFO) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<h3><span>${type}</span><code>${vl.replace(/&/g, '&amp;')}</code></h3><div class="sch-wrap"></div>
+      <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"><table class="kv tt"></table><span class="muted">${expr}</span></div>`;
+    $('gateCards').appendChild(card);
+    const c = new Circuit('gate_' + type);
+    const bd = new Board(c, card.querySelector('.sch-wrap'), 220, 64, { label: type + ' ゲート', maxW: 300 });
+    if (type === 'NOT') {
+      bd.toggle('a', 30, 32, 'A');
+      const g = bd.gate('NOT', 100, 20, ['a'], 'y');
+      bd.wire('a', [[41, 32], g.in[0]]);
+      bd.wire('y', [g.out, [181, 32]]);
+      bd.lamp('y', 190, 32);
+    } else {
+      bd.toggle('a', 30, 20, 'A');
+      bd.toggle('b', 30, 46, 'B');
+      const g = bd.gate(type, 100, 18, ['a', 'b'], 'y');
+      bd.wire('a', [[41, 20], [75, 20], [75, g.in[0][1]], g.in[0]]);
+      bd.wire('b', [[41, 46], [85, 46], [85, g.in[1][1]], g.in[1]]);
+      bd.wire('y', [g.out, [181, g.out[1]]]);
+      bd.lamp('y', 190, g.out[1]);
+    }
+    const ins = type === 'NOT' ? ['A'] : ['A', 'B'];
+    const tt = truthTable(card.querySelector('table'), c, ins, ['Y'], (...x) => [fn(...x)]);
+    c.hooks.push(() => tt(type === 'NOT' ? ['a'] : ['a', 'b']));
+    c.ready();
+  }
+}
+
+// ====================================================================
+// 3. 加算器
+// ====================================================================
+function buildHalf() {
+  const c = new Circuit('half');
+  const bd = new Board(c, $('half'), 320, 125, { label: '半加算器' });
+  bd.toggle('a', 30, 40, 'A');
+  bd.toggle('b', 30, 100, 'B');
+  const x = bd.gate('XOR', 120, 31, ['a', 'b'], 's');
+  const g = bd.gate('AND', 120, 81, ['a', 'b'], 'c');
+  bd.wire('a', [[41, 40], x.in[0]]);
+  bd.wire('a', [[70, 40], [70, 90], g.in[0]]); bd.dot('a', 70, 40);
+  bd.wire('b', [[41, 100], g.in[1]]);
+  bd.wire('b', [[95, 100], [95, 50], x.in[1]]); bd.dot('b', 95, 100);
+  bd.wire('s', [x.out, [221, 45]]); bd.lamp('s', 230, 45, 'S (和)');
+  bd.wire('c', [g.out, [221, 95]]); bd.lamp('c', 230, 95, 'C (桁上げ)');
+  c.ready();
+}
+
+// 全加算器を (ox, oy) を原点にして描く。n: net 名。cinTop: 桁上げ入力の縦線の上端 (相対 y)
+function drawFA(bd, ox, oy, n, cinTop) {
+  const X = v => ox + v, Y = v => oy + v, P = (x, y) => [X(x), Y(y)];
+  const x1 = bd.gate('XOR', X(70), Y(5), [n.a, n.b], n.p);
+  const a1 = bd.gate('AND', X(70), Y(70), [n.a, n.b], n.g);
+  const x2 = bd.gate('XOR', X(150), Y(10), [n.p, n.cin], n.s);
+  const a2 = bd.gate('AND', X(150), Y(40), [n.p, n.cin], n.t);
+  const o1 = bd.gate('OR', X(210), Y(55), [n.t, n.g], n.cout);
+  bd.wire(n.a, [P(0, 14), x1.in[0]]);
+  bd.wire(n.a, [P(30, 14), P(30, 79), a1.in[0]]); bd.dot(n.a, X(30), Y(14));
+  bd.wire(n.b, [P(0, 40), P(45, 40), P(45, 24), x1.in[1]]);
+  bd.wire(n.b, [P(45, 40), P(45, 89), a1.in[1]]); bd.dot(n.b, X(45), Y(40));
+  bd.wire(n.p, [x1.out, x2.in[0]]);
+  bd.wire(n.p, [P(120, 19), P(120, 49), a2.in[0]]); bd.dot(n.p, X(120), Y(19));
+  bd.wire(n.cin, [P(135, cinTop), P(135, 59), a2.in[1]]);
+  bd.wire(n.cin, [P(135, 29), x2.in[1]]); bd.dot(n.cin, X(135), Y(29));
+  bd.wire(n.t, [a2.out, P(195, 54), P(195, 64), o1.in[0]]);
+  bd.wire(n.g, [a1.out, P(202, 84), P(202, 74), o1.in[1]]);
+  bd.wire(n.s, [x2.out, P(261, 24)]);
+  return { s: P(270, 24), cout: o1.out };
+}
+
+function buildFull() {
+  const c = new Circuit('full');
+  const bd = new Board(c, $('full'), 400, 130, { label: '全加算器', minW: 330 });
+  const ox = 60, oy = 30;
+  bd.toggle('a', ox - 12, oy + 14, 'A');
+  bd.toggle('b', ox - 12, oy + 40, 'B');
+  bd.toggle('cin', ox + 135, oy - 16, 'Cin');
+  const r = drawFA(bd, ox, oy, { a: 'a', b: 'b', cin: 'cin', s: 's', cout: 'cout', p: 'p', g: 'g', t: 't' }, -5);
+  bd.lamp('s', r.s[0], r.s[1], 'S');
+  bd.wire('cout', [r.cout, [ox + 261, r.cout[1]]]);
+  bd.lamp('cout', ox + 270, r.cout[1], 'Cout');
+  const tt = truthTable($('fullTT'), c, ['A', 'B', 'Cin'], ['Cout', 'S'], (a, b, ci) => [(a + b + ci) >> 1, (a + b + ci) & 1]);
+  c.hooks.push(() => { tt(['a', 'b', 'cin']); $('fullTime').innerHTML = c.timeText(); });
+  c.ready();
+}
+
+const NBIT = 4;
+function buildRCA() {
+  const c = new Circuit('rca');
+  const rowH = 115, top = 42, ox = 60;
+  const bd = new Board(c, $('rca'), 380, top + NBIT * rowH + 6, { label: '4 ビット リップルキャリー加算器', maxW: 470 });
+  for (let i = 0; i < NBIT; i++) {
+    const oy = top + i * rowH;
+    bd.text(4, oy - 6, `ビット ${i}`, 'sm');
+    bd.toggle('a' + i, ox - 12, oy + 14, 'A' + i);
+    bd.toggle('b' + i, ox - 12, oy + 40, 'B' + i);
+    if (i === 0) bd.toggle('c0', ox + 135, oy - 18, 'Cin');
+    const r = drawFA(bd, ox, oy, { a: 'a' + i, b: 'b' + i, cin: 'c' + i, s: 's' + i, cout: 'c' + (i + 1), p: 'p' + i, g: 'g' + i, t: 't' + i }, i === 0 ? -7 : 0);
+    bd.lamp('s' + i, r.s[0], r.s[1], 'S' + i);
+    const cn = 'c' + (i + 1);
+    if (i < NBIT - 1) {
+      // 桁上げを次の段 (下) の Cin へ
+      bd.wire(cn, [r.cout, [ox + 258, r.cout[1]], [ox + 258, oy + 100], [ox + 135, oy + 100], [ox + 135, oy + rowH]]);
+      bd.text(ox + 262, oy + 104, 'c' + (i + 1), 'sm');
+    } else {
+      bd.wire(cn, [r.cout, [ox + 261, r.cout[1]]]);
+      bd.lamp(cn, ox + 270, r.cout[1], 'Cout');
+    }
+  }
+  c.hooks.push(drawRCAReadout);
+  c.ready();
+  const A = $('addA'), B = $('addB');
+  const go = () => {
+    const a = ((parseInt(A.value, 10) || 0) % 16 + 16) % 16, b = ((parseInt(B.value, 10) || 0) % 16 + 16) % 16;
+    c.apply({ ...bitVals('a', a, 4), ...bitVals('b', b, 4) });
+  };
+  $('addGo').onclick = go;
+  A.onchange = go; B.onchange = go;
+  $('add51').onclick = () => { A.value = 5; B.value = -1; c.apply({ ...bitVals('a', 5, 4), ...bitVals('b', 15, 4), c0: 0 }); };
+  $('add71').onclick = () => { A.value = 7; B.value = 1; c.apply({ ...bitVals('a', 7, 4), ...bitVals('b', 1, 4), c0: 0 }); };
+  $('add00').onclick = () => { A.value = 0; B.value = 0; c.apply({ ...bitVals('a', 0, 4), ...bitVals('b', 0, 4), c0: 0 }); };
+  $('addWorst').onclick = () => {
+    c.applyNow({ ...bitVals('a', 14, 4), ...bitVals('b', 0, 4), c0: 1 });
+    A.value = 15; B.value = 0;
+    c.apply({ a0: 1 });
+  };
+  // 最初の表示は 5 + (−1)
+  c.applyNow({ ...bitVals('a', 5, 4), ...bitVals('b', 15, 4) });
+  c.maxTime = 0;
+}
+function drawRCAReadout(c) {
+  const a = bitsOf(c, 'a', 4), b = bitsOf(c, 'b', 4), s = bitsOf(c, 's', 4), ci = c.get('c0'), co = c.get('c4');
+  const A = $('addA'), B = $('addB');
+  if (document.activeElement !== A && ((parseInt(A.value, 10) % 16 + 16) % 16) !== a) A.value = a;
+  if (document.activeElement !== B && ((parseInt(B.value, 10) % 16 + 16) % 16) !== b) B.value = b;
+  const busy = c.sim.busy();
+  $('rcaTime').innerHTML = c.timeText();
+  $('rcaTable').innerHTML = `<tr><th></th><th>2 進</th><th>符号なし</th><th>符号付き</th></tr>
+    <tr><td>A</td><td>${bin(a, 4)}</td><td>${a}</td><td>${sgn(signed(a, 4))}</td></tr>
+    <tr><td>B</td><td>${bin(b, 4)}</td><td>${b}</td><td>${sgn(signed(b, 4))}</td></tr>
+    <tr><td>Cin</td><td>${ci}</td><td></td><td></td></tr>
+    <tr class="${busy ? '' : 'current'}"><td>S</td><td>${bin(s, 4)}</td><td>${s}</td><td>${sgn(signed(s, 4))}</td></tr>
+    <tr><td>Cout</td><td>${co}</td><td></td><td></td></tr>`;
+  const sum = a + b + ci, ssum = signed(a, 4) + signed(b, 4) + ci;
+  let note;
+  if (busy) note = '<span class="busy">まだ伝搬中です。S は途中の (まちがっているかもしれない) 値です。</span>';
+  else {
+    note = `符号なし: ${a} + ${b}${ci ? ' + 1' : ''} = ${sum}` + (sum > 15 ? ` = ${bin(sum, 5)}<sub>2</sub> → 4 ビットに入るのは ${bin(s, 4)} = ${s}、あふれた 1 が Cout。` : '。') +
+      `<br>符号付き: ${sgn(signed(a, 4))} + ${sgn(signed(b, 4))}${ci ? ' + 1' : ''} = ${sgn(ssum)}` +
+      (ssum < -8 || ssum > 7 ? ` → 4 ビットの範囲 (−8〜7) を超えるので <b class="err">符号付きオーバーフロー</b> (S = ${sgn(signed(s, 4))})。` : ` → S = ${sgn(signed(s, 4))} ✓ (Cout は捨てる)`);
+  }
+  $('rcaNote').innerHTML = note;
+  const sb = signed(b, 4) & 0xff;
+  $('sext').textContent = `${bin(b, 4)} → ${bin(sb >> 4, 4)}_${bin(b, 4)} (= ${sgn(signed(b, 4))})`;
+}
+
+// ====================================================================
+// 4. マルチプレクサ
+// ====================================================================
+function buildMux1() {
+  const c = new Circuit('mux1');
+  const bd = new Board(c, $('mux1'), 320, 150, { label: '2:1 マルチプレクサ' });
+  bd.toggle('a', 25, 20, 'a');
+  bd.toggle('b', 25, 80, 'b');
+  bd.toggle('s', 25, 130, 's');
+  const n = bd.gate('NOT', 62, 118, ['s'], 'ns');
+  const g0 = bd.gate('AND', 150, 11, ['a', 'ns'], 'x0');
+  const g1 = bd.gate('AND', 150, 71, ['b', 's'], 'x1');
+  const o = bd.gate('OR', 220, 41, ['x0', 'x1'], 'y');
+  bd.wire('a', [[36, 20], g0.in[0]]);
+  bd.wire('b', [[36, 80], g1.in[0]]);
+  bd.wire('s', [[36, 130], n.in[0]]);
+  bd.wire('s', [[48, 130], [48, 90], g1.in[1]]); bd.dot('s', 48, 130);
+  bd.wire('ns', [n.out, [120, 130], [120, 30], g0.in[1]]);
+  bd.wire('x0', [g0.out, [200, 25], [200, 50], o.in[0]]);
+  bd.wire('x1', [g1.out, [205, 85], [205, 60], o.in[1]]);
+  bd.wire('y', [o.out, [281, 55]]);
+  bd.lamp('y', 290, 55, 'y', { pos: 'top' });
+  const tt = truthTable($('mux1TT'), c, ['s', 'a', 'b'], ['y'], (s, a, b) => [s ? b : a]);
+  c.hooks.push(() => tt(['s', 'a', 'b']));
+  c.ready();
+}
+// マルチプレクサの記号 (台形) を描く。中身のゲートはシミュレータだけに置く
+function muxSymbol(bd, x, y, net, sel) {
+  svgEl('polygon', { class: 'box', 'data-net': sel, points: `${x},${y - 8} ${x + 26},${y - 1} ${x + 26},${y + 21} ${x},${y + 28}` }, bd.layer.g);
+  bd.text(x + 4, y + 3, '0', 'sm'); bd.text(x + 4, y + 23, '1', 'sm');
+  return { in0: [x, y], in1: [x + 0, y + 20], out: [x + 26, y + 10], sel: [x + 13, y + 24.5] };
+}
+function buildMux4() {
+  const c = new Circuit('mux4');
+  const bd = new Board(c, $('mux4'), 340, 290, { label: '4 ビット 2:1 マルチプレクサ' });
+  const rowY = i => 28 + (3 - i) * 60;
+  for (let i = 3; i >= 0; i--) {
+    const y = rowY(i);
+    bd.toggle('r' + i, 80, y, `rs2_val[${i}]`);
+    bd.toggle('m' + i, 80, y + 20, `imm[${i}]`);
+    buildMux(c.sim, 'r' + i, 'm' + i, 'bsel', 'y' + i, 'mx' + i + '.');
+    const m = muxSymbol(bd, 170, y, 'y' + i, 'bsel');
+    bd.wire('r' + i, [[91, y], m.in0]);
+    bd.wire('m' + i, [[91, y + 20], m.in1]);
+    bd.wire('bsel', [m.sel, [m.sel[0], y + 36], [130, y + 36]]);
+    bd.dot('bsel', 130, y + 36);
+    bd.wire('y' + i, [m.out, [251, m.out[1]]]);
+    bd.lamp('y' + i, 260, m.out[1], `alu_b[${i}]`);
+  }
+  bd.wire('bsel', [[130, rowY(3) + 36], [130, 266], [91, 266]]);
+  bd.toggle('bsel', 80, 266, 'b_sel');
+  bd.text(140, 280, '0 = rs2 / 1 = imm', 'sm');
+  c.hooks.push(() => {
+    const y = bitsOf(c, 'y', 4), bs = c.get('bsel');
+    $('mux4Out').innerHTML = c.sim.busy() ? '<span class="busy">伝搬中…</span>' :
+      `b_sel = ${bs} (${bs ? 'B_IMM: 即値' : 'B_RS2: レジスタ'}) → alu_b = ${bin(y, 4)} (${sgn(signed(y, 4))})`;
+  });
+  c.ready();
+  c.applyNow({ ...bitVals('r', 3, 4), ...bitVals('m', 15, 4), bsel: 1 });
+  $('muxAddi').onclick = () => c.apply({ ...bitVals('m', 15, 4), bsel: 1 });
+  $('muxAdd').onclick = () => c.apply({ ...bitVals('r', 3, 4), bsel: 0 });
+}
+
+// ====================================================================
+// 5. 命令デコーダ
+// ====================================================================
+const OPCODES = [
+  // [信号名, opcode, decoder.v の行範囲]
+  ['is_lui', 0b0110111, [65, 67]],
+  ['is_auipc', 0b0010111, [68, 70]],
+  ['is_jal', 0b1101111, [71, 74]],
+  ['is_jalr', 0b1100111, [75, 78]],
+  ['is_branch', 0b1100011, [79, 81]],
+  ['is_load', 0b0000011, [82, 86]],
+  ['is_store', 0b0100011, [87, 90]],
+  ['is_op_imm', 0b0010011, [91, 97]],
+  ['is_op_imm_32', 0b0011011, [91, 97]],
+  ['is_op', 0b0110011, [98, 103]],
+  ['is_op_32', 0b0111011, [98, 103]],
+  ['is_misc_mem', 0b0001111, [104, 107]],
+  ['is_system', 0b1110011, [108, 113]],
+];
+const CONTROLS = [
+  // [表示名, net, OR する行, 説明]
+  ['reg_we', 'reg_we', ['is_lui', 'is_auipc', 'is_jal', 'is_jalr', 'is_load', 'is_op_imm', 'is_op_imm_32', 'is_op', 'is_op_32'], 'rd に書き戻す *'],
+  ['b_sel = IMM', 'b_sel', ['is_lui', 'is_auipc', 'is_jal', 'is_jalr', 'is_branch', 'is_load', 'is_store', 'is_op_imm', 'is_op_imm_32'], 'ALU の B に即値'],
+  ['a_sel = PC', 'a_pc', ['is_auipc', 'is_jal', 'is_branch'], 'ALU の A に pc'],
+  ['a_sel = ZERO', 'a_zero', ['is_lui'], 'ALU の A に 0'],
+  ['mem_read', 'mem_read', ['is_load'], 'ロード'],
+  ['mem_write', 'mem_write', ['is_store'], 'ストア'],
+  ['wb_sel = MEM', 'wb_mem', ['is_load'], 'メモリの値を書き戻す'],
+  ['wb_sel = PC4', 'wb_pc4', ['is_jal', 'is_jalr'], 'pc+4 を書き戻す'],
+  ['branch', 'branch', ['is_branch'], '条件分岐'],
+  ['jump', 'jump', ['is_jal', 'is_jalr'], '無条件ジャンプ'],
+  ['jalr', 'jalr', ['is_jalr'], '飛び先の bit0 を 0 に'],
+  ['is_word', 'is_word', ['is_op_imm_32', 'is_op_32'], '32 ビット演算 (*W)'],
+];
+const PRESETS = [
+  ['addi a0, a0, -1', 0xfff50513],
+  ['lw a0, 8(sp)', 0x00812503],
+  ['sw a0, 8(sp)', 0x00a12423],
+  ['beq a0, zero, +8', 0x00050463],
+  ['jal ra, +16', 0x010000ef],
+  ['add a0, a0, a1', 0x00b50533],
+  ['lui a0, 0x12345', 0x12345537],
+  ['ecall', 0x00000073],
+];
+// decoder.v 63〜115 行 (表示用の抜粋)
+const DEC_SRC = [
+  [63, '        case (opcode)'],
+  [65, '            `OPC_LUI: begin            // rd = 0 + imm'],
+  [66, '                reg_we = 1; a_sel = `A_ZERO; b_sel = `B_IMM; imm_sel = `IMM_U;'],
+  [67, '            end'],
+  [68, '            `OPC_AUIPC: begin          // rd = pc + imm'],
+  [69, '                reg_we = 1; a_sel = `A_PC; b_sel = `B_IMM; imm_sel = `IMM_U;'],
+  [70, '            end'],
+  [71, '            `OPC_JAL: begin'],
+  [72, '                reg_we = 1; jump = 1; a_sel = `A_PC; b_sel = `B_IMM; imm_sel = `IMM_J;'],
+  [73, '                wb_sel = `WB_PC4;'],
+  [74, '            end'],
+  [75, '            `OPC_JALR: begin'],
+  [76, '                reg_we = 1; jump = 1; jalr = 1; b_sel = `B_IMM; imm_sel = `IMM_I;'],
+  [77, '                wb_sel = `WB_PC4;'],
+  [78, '            end'],
+  [79, '            `OPC_BRANCH: begin'],
+  [80, '                branch = 1; a_sel = `A_PC; b_sel = `B_IMM; imm_sel = `IMM_B;'],
+  [81, '            end'],
+  [82, '            `OPC_LOAD: begin'],
+  [83, '                reg_we = 1; mem_read = 1; b_sel = `B_IMM; imm_sel = `IMM_I;'],
+  [84, '                wb_sel = `WB_MEM;'],
+  [85, "                illegal = (funct3 == 3'b111);"],
+  [86, '            end'],
+  [87, '            `OPC_STORE: begin'],
+  [88, '                mem_write = 1; b_sel = `B_IMM; imm_sel = `IMM_S;'],
+  [89, '                illegal = funct3[2];'],
+  [90, '            end'],
+  [91, '            `OPC_OP_IMM, `OPC_OP_IMM_32: begin   // rd = rs1 (演算) imm'],
+  [92, '                reg_we  = 1; b_sel = `B_IMM; imm_sel = `IMM_I;'],
+  [93, '                is_word = (opcode == `OPC_OP_IMM_32);'],
+  [96, "                alu_op  = {(funct3 == 3'b101) & inst[30], funct3};"],
+  [97, '            end'],
+  [98, '            `OPC_OP, `OPC_OP_32: begin           // rd = rs1 (演算) rs2'],
+  [99, '                reg_we    = 1;'],
+  [100, '                is_word   = (opcode == `OPC_OP_32);'],
+  [101, "                is_muldiv = (funct7 == 7'b0000001);"],
+  [102, '                alu_op    = {inst[30], funct3};'],
+  [103, '            end'],
+  [104, '            `OPC_MISC_MEM: begin   // fence: 何もしない'],
+  [107, '            end'],
+  [108, '            `OPC_SYSTEM: begin'],
+  [109, "                if (inst == 32'h00000073) begin   // ecall"],
+  [110, '                    ecall = 1; reg_we = 1; wb_sel = `WB_SYS;'],
+  [111, '                end else'],
+  [112, '                    illegal = 1;'],
+  [113, '            end'],
+  [114, '            default: illegal = 1;'],
+  [115, '        endcase'],
+];
+
+function buildDecoder() {
+  const c = new Circuit('dec');
+  const colX = k => 70 + (6 - k) * 46;          // bit k の元の線の x
+  const rowY = r => 104 + r * 26;
+  const H = rowY(OPCODES.length - 1) + 22;
+  const bd = new Board(c, $('dec'), 580, H, { label: '命令デコーダ (opcode の一致検出)', minW: 500, maxW: 640 });
+  const xEnd = colX(0) + 34;
+  for (let k = 6; k >= 0; k--) {
+    const xt = colX(k), xn = xt + 20;
+    bd.toggle('i' + k, xt, 24, `i${k}`, { pos: 'top', onToggle: () => decSetInst(c, (decInst ^ (1 << k)) >>> 0) });
+    bd.wire('i' + k, [[xt, 35], [xt, H - 6]]);
+    bd.wire('i' + k, [[xt, 46], [xn, 46], [xn, 52]]); bd.dot('i' + k, xt, 46);
+    // 下向きの NOT
+    c.sim.gate('NOT', ['i' + k], 'n' + k);
+    const g = svgEl('g', { class: 'gate', 'data-net': 'n' + k }, bd.layer.g);
+    svgEl('path', { d: `M${xn - 7},52 L${xn + 7},52 L${xn},64 Z` }, g);
+    svgEl('circle', { cx: xn, cy: 67, r: 3 }, g);
+    bd.wire('n' + k, [[xn, 70], [xn, H - 6]]);
+    bd.text(xn + 3, 84, '¬', 'sm');
+  }
+  OPCODES.forEach(([name, opc], r) => {
+    const y = rowY(r);
+    const ins = [];
+    svgEl('line', { class: 'prod', 'data-net': name, x1: 56, y1: y, x2: xEnd, y2: y }, bd.layer.w);
+    for (let k = 6; k >= 0; k--) {
+      const one = (opc >> k) & 1, net = (one ? 'i' : 'n') + k;
+      ins.push(net);
+      svgEl('circle', { class: 'tap', 'data-net': net, cx: one ? colX(k) : colX(k) + 20, cy: y, r: 4 }, bd.layer.g);
+    }
+    c.sim.gate('AND', ins, name);
+    const g = svgEl('g', { class: 'gate', 'data-net': name }, bd.layer.g);
+    svgEl('path', { d: `M${xEnd},${y - 9} h12 a9,9 0 0 1 0,18 h-12 Z` }, g);
+    bd.wire(name, [[xEnd + 21, y], [xEnd + 34, y]]);
+    bd.lamp(name, xEnd + 43, y, null);
+    bd.text(xEnd + 57, y + 4, name, 'lbl');
+    bd.text(xEnd + 145, y + 4, bin(opc, 7), 'sm');
+  });
+  bd.text(8, 28, 'inst', 'lbl');
+  // 制御信号 = 行の OR
+  const tb = $('ctlTable');
+  let h = '<tr><th>信号</th><th></th><th>= どの行の OR か</th></tr>';
+  for (const [label, net, rows, desc] of CONTROLS) {
+    c.sim.gate(rows.length === 1 ? 'BUF' : 'OR', rows, net);
+    h += `<tr><td data-ctl="${net}">${label}</td><td><span class="hl" data-net="${net}"></span></td><td class="dec" style="white-space:normal">${rows.join(' | ')}<br><span class="muted">${desc}</span></td></tr>`;
+  }
+  c.sim.gate('NOR', OPCODES.map(o => o[0]), 'illegal');
+  h += `<tr><td data-ctl="illegal">illegal</td><td><span class="hl" data-net="illegal"></span></td><td class="dec" style="white-space:normal">どの行にも当たらない (NOR)<br><span class="muted">default: illegal = 1</span></td></tr>`;
+  tb.innerHTML = h;
+  c.roots.push(tb);
+  $('decSrc').innerHTML = DEC_SRC.map(([ln, s]) => `<span data-ln="${ln}"><span class="ln">${String(ln).padStart(3)}</span>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`).join('');
+  c.hooks.push(decRender);
+  c.ready();
+  // プリセット
+  for (const [name, inst] of PRESETS) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.title = '0x' + inst.toString(16).padStart(8, '0');
+    b.onclick = () => decSetInst(c, inst);
+    $('decPresets').appendChild(b);
+  }
+  decSetInst(c, PRESETS[0][1], true);
+}
+let decInst = 0;
+function decSetInst(c, inst, now) {
+  decInst = inst >>> 0;
+  const vals = {};
+  for (let k = 0; k < 7; k++) vals['i' + k] = (decInst >> k) & 1;
+  if (now) c.applyNow(vals); else c.apply(vals);
+  decInfo(c);
+}
+function decInfo() {
+  const i = decInst, hex = '0x' + i.toString(16).padStart(8, '0');
+  const b = bin(i, 32);
+  const fl = [['31..25', b.slice(0, 7), 'funct7 / imm'], ['24..20', b.slice(7, 12), 'rs2 / imm'], ['19..15', b.slice(12, 17), 'rs1'],
+    ['14..12', b.slice(17, 20), 'funct3'], ['11..7', b.slice(20, 25), 'rd / imm'], ['6..0', b.slice(25), 'opcode']];
+  $('decBits').innerHTML = `<span class="fld"><small>inst</small>${hex}</span>` +
+    fl.map(([r, v, n], j) => `<span class="fld${j === 5 ? ' opc' : ''}"><small>${r} ${n}</small>${v}</span>`).join('');
+  const p = PRESETS.find(x => x[1] === i);
+  $('decInfo').textContent = p ? `${p[0]}  (opcode = ${b.slice(25)})` : `手で変更した命令 (opcode = ${b.slice(25)})`;
+}
+function decRender(c) {
+  const busy = c.sim.busy();
+  const hit = OPCODES.find(o => c.get(o[0]) === 1);
+  const [lo, hi] = busy ? [0, -1] : hit ? hit[2] : c.get('illegal') ? [114, 114] : [0, -1];
+  $('decSrc').querySelectorAll('span[data-ln]').forEach(s => {
+    const ln = +s.dataset.ln;
+    s.classList.toggle('current', ln >= lo && ln <= hi);
+  });
+  const cur = $('decSrc').querySelector('.current');
+  if (cur && !busy) {
+    const pre = $('decSrc');
+    const top = cur.offsetTop - pre.offsetTop;
+    if (top < pre.scrollTop || top > pre.scrollTop + pre.clientHeight - 40) pre.scrollTop = Math.max(0, top - 30);
+  }
+  $('ctlTable').querySelectorAll('td[data-ctl]').forEach(td => td.classList.toggle('on', c.get(td.dataset.ctl) === 1 && !c.sim.changing(td.dataset.ctl)));
+}
+
+// ====================================================================
+// 6. ラッチ・フリップフロップ・レジスタ
+// ====================================================================
+function buildLatch() {
+  const c = new Circuit('latch');
+  const bd = new Board(c, $('latch'), 330, 160, { label: 'D ラッチ' });
+  sNet(c.sim);
+  function sNet(sim) { sim.net('nd', 1); sim.net('s', 1); sim.net('r', 1); sim.net('q', 0); sim.net('qn', 1); }
+  bd.toggle('d', 25, 30, 'D');
+  bd.toggle('e', 25, 80, 'E');
+  const nt = bd.gate('NOT', 62, 128, ['d'], 'nd');
+  const g1 = bd.gate('NAND', 120, 21, ['d', 'e'], 's', { label: 'S̄' });
+  const g2 = bd.gate('NAND', 120, 111, ['e', 'nd'], 'r', { label: 'R̄' });
+  const g3 = bd.gate('NAND', 210, 31, ['s', 'qn'], 'q');
+  const g4 = bd.gate('NAND', 210, 101, ['r', 'q'], 'qn');
+  bd.wire('d', [[36, 30], g1.in[0]]);
+  bd.wire('d', [[45, 30], [45, 140], nt.in[0]]); bd.dot('d', 45, 30);
+  bd.wire('nd', [nt.out, [105, 140], g2.in[1]]);
+  bd.wire('e', [[36, 80], [85, 80]]);
+  bd.wire('e', [[85, 80], [85, 40], g1.in[1]]);
+  bd.wire('e', [[85, 80], [85, 120], g2.in[0]]); bd.dot('e', 85, 80);
+  bd.wire('s', [g1.out, [185, 35], [185, 40], g3.in[0]]);
+  bd.wire('r', [g2.out, [185, 125], [185, 120], g4.in[0]]);
+  bd.wire('q', [g3.out, [291, 45]]);
+  bd.wire('q', [[265, 45], [265, 75], [198, 75], [198, 110], g4.in[1]]); bd.dot('q', 265, 45);
+  bd.wire('qn', [g4.out, [291, 115]]);
+  bd.wire('qn', [[275, 115], [275, 90], [192, 90], [192, 50], g3.in[1]]); bd.dot('qn', 275, 115);
+  bd.lamp('q', 300, 45, 'Q', { pos: 'top' });
+  bd.lamp('qn', 300, 115, 'Q̄', { pos: 'bottom' });
+  c.ready();
+}
+
+const dffHist = [];
+function buildDFFPanel() {
+  const c = new Circuit('dff');
+  const bd = new Board(c, $('dff'), 400, 150, { label: 'D フリップフロップ' });
+  buildDFF(c.sim, 'd', 'clk', 'q', 'ff.');
+  bd.toggle('d', 30, 50, 'D', { pos: 'top' });
+  bd.toggle('clk', 30, 125, 'CLK', { pos: 'bottom' });
+  // NOT (描画だけ。シミュレータのゲートは buildDFF が作った ff.nclk)
+  const nt = bd.gate('NOT', 60, 68, ['clk'], 'ff.nclk', { drawOnly: true });
+  const box = (x, en, t1, t2) => {
+    svgEl('rect', { class: 'box', 'data-net': en, x, y: 25, width: 80, height: 70, rx: 4 }, bd.layer.g);
+    bd.text(x + 40, 44, t1, 'lbl', 'middle');
+    bd.text(x + 40, 60, t2, 'sm', 'middle');
+    bd.text(x + 4, 54, 'D', 'sm'); bd.text(x + 4, 84, 'E', 'sm'); bd.text(x + 76, 54, 'Q', 'sm', 'end');
+    return bd.text(x + 40, 84, '', 'sm', 'middle');
+  };
+  const st1 = box(110, 'ff.nclk', 'マスタ', 'D ラッチ');
+  const st2 = box(240, 'clk', 'スレーブ', 'D ラッチ');
+  bd.wire('d', [[41, 50], [110, 50]]);
+  bd.wire('clk', [[41, 125], [220, 125], [220, 80], [240, 80]]);
+  bd.wire('clk', [[48, 125], [48, 80], nt.in[0]]); bd.dot('clk', 48, 125);
+  bd.wire('ff.nclk', [nt.out, [110, 80]]);
+  bd.wire('ff.qm', [[190, 50], [240, 50]]);
+  bd.text(215, 44, 'Qm', 'sm', 'middle');
+  bd.wire('q', [[320, 50], [356, 50]]);
+  bd.lamp('q', 365, 50, 'Q', { pos: 'top' });
+  const wave = new Board(null, $('dffWave'), 400, 110, { label: '波形' });
+  c.hooks.push(() => {
+    st1.textContent = c.get('ff.nclk') ? '素通し' : '保持';
+    st2.textContent = c.get('clk') ? '素通し' : '保持';
+  });
+  let prevClk = 0, prevQ = 0;
+  const log = msg => { const d = document.createElement('div'); d.textContent = msg; $('dffLog').prepend(d); };
+  c.settled.push(() => {
+    const s = { clk: c.get('clk'), d: c.get('d'), qm: c.get('ff.qm'), q: c.get('q') };
+    const last = dffHist[dffHist.length - 1];
+    if (!last || last.clk !== s.clk || last.d !== s.d || last.q !== s.q || last.qm !== s.qm) {
+      dffHist.push(s);
+      if (dffHist.length > 22) dffHist.shift();
+      if (s.clk && !prevClk) log(`CLK ↑ (立ち上がり): D = ${s.d} を取り込み → Q = ${s.q}`);
+      else if (!s.clk && prevClk) log(`CLK ↓: マスタが再び素通し、Q = ${s.q} は保持`);
+      else if (s.q === prevQ && last && last.d !== s.d) log(`D = ${s.d} に変えたが、エッジが無いので Q = ${s.q} のまま`);
+      prevClk = s.clk; prevQ = s.q;
+      drawWave(wave);
+    }
+  });
+  c.ready();
+  dffHist.push({ clk: 0, d: 0, qm: 0, q: 0 });
+  drawWave(wave);
+  $('dffD').onclick = () => c.toggle('d');
+  $('dffClk').onclick = () => c.toggle('clk');
+  $('dffPulse').onclick = async () => {
+    if (c.sim.future.clk) await c.apply({ clk: 0 });
+    await c.apply({ clk: 1 });
+    await c.apply({ clk: 0 });
+  };
+  $('dffClear').onclick = () => { dffHist.splice(0, dffHist.length - 1); $('dffLog').innerHTML = ''; drawWave(wave); };
+}
+function drawWave(bd) {
+  bd.layer.w.innerHTML = ''; bd.layer.g.innerHTML = ''; bd.layer.t.innerHTML = '';
+  const sigs = [['CLK', 'clk'], ['D', 'd'], ['Qm', 'qm'], ['Q', 'q']];
+  const x0 = 40, dx = 16;
+  sigs.forEach(([lbl, k], j) => {
+    const yb = 22 + j * 24, yh = yb - 14;
+    bd.text(4, yb - 4, lbl, 'lbl');
+    svgEl('line', { class: 'grid-l', x1: x0, y1: yb, x2: 396, y2: yb }, bd.layer.w);
+    let pts = [];
+    dffHist.forEach((s, i) => { const y = s[k] ? yh : yb; pts.push([x0 + i * dx, y], [x0 + (i + 1) * dx, y]); });
+    svgEl('polyline', { class: 'wave' + (k === 'clk' ? ' clk' : ''), points: pts.map(p => p.join(',')).join(' ') }, bd.layer.g);
+  });
+  dffHist.forEach((s, i) => {
+    if (i > 0 && s.clk && !dffHist[i - 1].clk) svgEl('line', { class: 'edge', x1: x0 + i * dx, y1: 4, x2: x0 + i * dx, y2: 106 }, bd.layer.w);
+  });
+}
+
+function buildRegister() {
+  const c = new Circuit('reg');
+  const bd = new Board(c, $('reg'), 400, 300, { label: '4 ビット レジスタ' });
+  const rowY = i => 32 + (3 - i) * 55;
+  for (let i = 3; i >= 0; i--) {
+    const y = rowY(i);
+    buildMux(c.sim, 'q' + i, 'd' + i, 'we', 'm' + i, 'mx' + i + '.');
+    buildDFF(c.sim, 'm' + i, 'clk', 'q' + i, 'ff' + i + '.');
+    bd.toggle('d' + i, 66, y + 20, `d${i}`);
+    const m = muxSymbol(bd, 130, y, 'm' + i, 'we');
+    bd.wire('d' + i, [[77, y + 20], m.in1]);
+    svgEl('rect', { class: 'box', x: 195, y: y - 8, width: 60, height: 36, rx: 3 }, bd.layer.g);
+    svgEl('polyline', { class: 'w', points: `195,${y + 15} 201,${y + 20} 195,${y + 25}` }, bd.layer.g);
+    bd.text(199, y + 6, 'D', 'sm'); bd.text(251, y + 6, 'Q', 'sm', 'end'); bd.text(225, y + 26, 'DFF', 'sm', 'middle');
+    bd.wire('m' + i, [m.out, [195, y + 10 - 8 + 8]]);
+    bd.wire('clk', [[178, y + 20], [195, y + 20]]);
+    bd.wire('q' + i, [[255, y + 10], [331, y + 10]]);
+    bd.wire('q' + i, [[290, y + 10], [290, y - 16], [112, y - 16], [112, y], m.in0]); bd.dot('q' + i, 290, y + 10);
+    bd.lamp('q' + i, 340, y + 10, `q${i}`);
+    bd.wire('we', [m.sel, [m.sel[0], y + 33], [100, y + 33]]); bd.dot('we', 100, y + 33);
+  }
+  bd.wire('we', [[100, rowY(3) + 33], [100, 266]]);
+  bd.toggle('we', 100, 266, 'we', { pos: 'bottom' });
+  bd.wire('clk', [[178, rowY(3) + 20], [178, 266]]);
+  for (let i = 0; i < 4; i++) bd.dot('clk', 178, rowY(i) + 20);
+  bd.toggle('clk', 178, 266, 'CLK', { pos: 'bottom' });
+  c.hooks.push(() => {
+    const q = bitsOf(c, 'q', 4), d = bitsOf(c, 'd', 4);
+    $('regOut').innerHTML = `q = ${bin(q, 4)} (${q})<br><span class="muted" style="font-size:13px;font-weight:normal">d = ${bin(d, 4)}, we = ${c.get('we')}, CLK = ${c.get('clk')}${c.sim.busy() ? ' <span class="busy">伝搬中…</span>' : ''}</span>`;
+  });
+  c.ready();
+  $('regPulse').onclick = async () => {
+    if (c.sim.future.clk) await c.apply({ clk: 0 });
+    await c.apply({ clk: 1 });
+    await c.apply({ clk: 0 });
+  };
+  $('regSet5').onclick = () => c.apply({ ...bitVals('d', 5, 4), we: 1 });
+  $('regSet4').onclick = () => c.apply({ ...bitVals('d', 4, 4), we: 0 });
+}
+
+// ====================================================================
+// 7. ALU スライス
+// ====================================================================
+function buildALU() {
+  const c = new Circuit('alu');
+  const sim = c.sim;
+  const rowH = 70, top = 40;
+  const bd = new Board(c, $('alu'), 400, top + 4 * rowH + 30, { label: '4 ビット ALU' });
+  // SUB = op1 & op0 のとき B を反転し、最下位の桁上げに 1 を入れる
+  sim.gate('AND', ['op1', 'op0'], 'sub');
+  for (let i = 0; i < 4; i++) {
+    const y = top + i * rowH, p = 'u' + i + '.';
+    sim.gate('XOR', ['b' + i, 'sub'], p + 'bx');
+    sim.gate('AND', ['a' + i, p + 'bx'], p + 'and');
+    sim.gate('OR', ['a' + i, p + 'bx'], p + 'or');
+    buildFA(sim, 'a' + i, p + 'bx', i === 0 ? 'sub' : 'k' + i, p + 'sum', 'k' + (i + 1), p + 'fa.');
+    // 4:1 マルチプレクサ: op0 で and/or と sum/sum を選び、op1 でその 2 つを選ぶ
+    buildMux(sim, p + 'and', p + 'or', 'op0', p + 'lo', p + 'm0.');
+    buildMux(sim, p + 'lo', p + 'sum', 'op1', 'y' + i, p + 'm1.');
+    bd.text(4, y - 4, `スライス ${i}`, 'sm');
+    bd.toggle('a' + i, 40, y + 10, 'A' + i);
+    bd.toggle('b' + i, 40, y + 34, 'B' + i);
+    svgEl('rect', { class: 'box', x: 110, y: y - 4, width: 150, height: 52, rx: 4 }, bd.layer.g);
+    bd.text(118, y + 10, 'B⊕sub → AND / OR / 全加算', 'sm');
+    const vals = [['AND', p + 'and'], ['OR', p + 'or'], ['SUM', p + 'sum']];
+    vals.forEach(([l, n], j) => {
+      const x = 130 + j * 45;
+      svgEl('circle', { class: 'tap', 'data-net': n, cx: x, cy: y + 30, r: 5 }, bd.layer.g);
+      bd.text(x + 8, y + 34, l, 'sm');
+    });
+    bd.wire('a' + i, [[51, y + 10], [110, y + 10]]);
+    bd.wire('b' + i, [[51, y + 34], [110, y + 34]]);
+    bd.wire('y' + i, [[260, y + 22], [331, y + 22]]);
+    bd.text(268, y + 16, 'op で選ぶ', 'sm');
+    bd.lamp('y' + i, 340, y + 22, 'Y' + i);
+    // 桁上げ: 下のスライスへ
+    const kin = i === 0 ? 'sub' : 'k' + i;
+    bd.wire(kin, [[250, y - 14], [250, y - 4]]);
+    bd.text(254, y - 8, i === 0 ? 'cin = sub' : 'c' + i, 'sm');
+    if (i < 3) bd.wire('k' + (i + 1), [[250, y + 48], [250, y + rowH - 14]]);
+  }
+  const yb = top + 4 * rowH;
+  bd.wire('k4', [[250, yb - 22], [250, yb - 6]]);
+  bd.lamp('k4', 250, yb + 4, 'Cout', { pos: 'left' });
+  bd.toggle('op1', 300, yb + 4, 'op1', { pos: 'left' });
+  bd.toggle('op0', 375, yb + 4, 'op0', { pos: 'left' });
+  sim.net('op1'); sim.net('op0');
+  c.hooks.push(() => {
+    const a = bitsOf(c, 'a', 4), b = bitsOf(c, 'b', 4), y = bitsOf(c, 'y', 4), op = c.get('op1') * 2 + c.get('op0');
+    const name = ['AND', 'OR', 'ADD', 'SUB'][op];
+    $('aluTime').innerHTML = c.timeText();
+    const sel = $('aluOp'); if (document.activeElement !== sel) sel.value = op;
+    const A = $('aluA'), B = $('aluB');
+    if (document.activeElement !== A && ((parseInt(A.value, 10) % 16 + 16) % 16) !== a) A.value = a;
+    if (document.activeElement !== B && ((parseInt(B.value, 10) % 16 + 16) % 16) !== b) B.value = b;
+    const expect = [a & b, a | b, (a + b) & 15, (a - b) & 15][op];
+    $('aluTable').innerHTML = `<tr><td>A</td><td>${bin(a, 4)}</td><td>${sgn(signed(a, 4))}</td></tr>
+      <tr><td>B</td><td>${bin(b, 4)}</td><td>${sgn(signed(b, 4))}</td></tr>
+      <tr><td>op</td><td>${bin(op, 2)}</td><td>${name}</td></tr>
+      <tr class="${c.sim.busy() ? '' : 'current'}"><td>Y</td><td>${bin(y, 4)}</td><td>${sgn(signed(y, 4))}${c.sim.busy() ? ' <span class="busy">伝搬中…</span>' : y === expect ? ' ✓' : ''}</td></tr>`;
+  });
+  c.ready();
+  const go = () => {
+    const a = ((parseInt($('aluA').value, 10) || 0) % 16 + 16) % 16, b = ((parseInt($('aluB').value, 10) || 0) % 16 + 16) % 16, op = +$('aluOp').value;
+    c.apply({ ...bitVals('a', a, 4), ...bitVals('b', b, 4), op1: op >> 1, op0: op & 1 });
+  };
+  $('aluGo').onclick = go;
+  $('aluA').onchange = go; $('aluB').onchange = go; $('aluOp').onchange = go;
+  c.applyNow({ ...bitVals('a', 6, 4), ...bitVals('b', 3, 4), op1: 1, op0: 0 });
+  c.maxTime = 0;
+}
+
+// ====================================================================
+// 起動
+// ====================================================================
+function main() {
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  UI.anim = !reduce;
+  $('anim').checked = UI.anim;
+  $('anim').onchange = e => { UI.anim = e.target.checked; };
+  $('speed').onchange = e => { UI.stepMs = +e.target.value; };
+  document.querySelectorAll('a[data-gh]').forEach(a => { a.href = GH + a.dataset.gh; });
+  buildCmosNot(); buildCmosNand(); buildNandOr();
+  buildGateCards();
+  buildHalf(); buildFull(); buildRCA();
+  buildMux1(); buildMux4();
+  buildDecoder();
+  buildLatch(); buildDFFPanel(); buildRegister();
+  buildALU();
+  window.gates.ready = true;
+}
+main();
+</script>
+</body>
+</html>
