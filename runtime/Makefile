@@ -1,11 +1,11 @@
 .PHONY: build test vet examples
 build:
-	go build -o minirt .
+	go build -o bin/minirt .
 test:
 	go vet ./... && go test ./...
 examples: build
-	./minirt examples/hello.js
-	./minirt examples/timers.js
-	./minirt examples/async_fs.js --allow-read=examples/data --allow-write=examples/data
-	-./minirt examples/sandbox_escape.js --allow-read=examples/data --timeout=2s
-	-./minirt examples/fetch.js --allow-net=example.com
+	./bin/minirt examples/hello.js
+	./bin/minirt examples/timers.js
+	./bin/minirt examples/async_fs.js --allow-read=examples/data --allow-write=examples/data
+	-./bin/minirt examples/sandbox_escape.js --allow-read=examples/data --timeout=2s
+	-./bin/minirt examples/fetch.js --allow-net=example.com
