@@ -1,0 +1,21 @@
+// JS と違い、暗黙の型変換は一切しない
+
+// == は型も含めて比較 (=== は不要)
+print(1 == 1, 1 == "1", nil == false, [1] == [1])
+
+// 偽になるのは false と nil だけ。0 や "" は真
+for (v in [0, "", false, nil, []]) {
+  const label = type(v) + " " + str(v)
+  if (v) { print(label, "-> truthy") } else { print(label, "-> falsy") }
+}
+
+// 文字列と数値を連結したいなら str() で明示的に変換する
+print("answer: " + str(42))
+
+// 存在しないキーは undefined ではなくエラー。事前に has() で確認する
+const m = {a: 1}
+print(has(m, "b"))
+
+// これは実行時エラー (行:列 付き)
+print("1" + 1)
+print("ここには到達しない")

@@ -1,0 +1,9 @@
+true false false false
+number 0 -> truthy
+string  -> truthy
+bool false -> falsy
+nil nil -> falsy
+array [] -> truthy
+answer: 42
+false
+20:11: runtime error: cannot apply + to string and number

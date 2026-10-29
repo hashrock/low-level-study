@@ -1,0 +1,55 @@
+// 孫関数からの捕捉・局所の再帰関数・箱の共有
+fn outer() {
+  let n = 0
+  fn middle() {
+    return fn() {
+      n += 1          // 2 段外の変数: middle も箱を受け渡す
+      return n
+    }
+  }
+  const inc = middle()
+  inc()
+  inc()
+  return n            // 同じ箱なので 2
+}
+print("outer:", outer())
+
+fn run() {
+  fn fact(k) {        // 局所関数の自己再帰 (自分自身を捕捉)
+    if (k <= 1) { return 1 }
+    return k * fact(k - 1)
+  }
+  return fact(15)
+}
+print("15! =", run())
+
+// 引数を捕捉して後から書き換える
+fn makeStack() {
+  let items = []
+  return {
+    push: fn(x) { push(items, x) },
+    pop: fn() => pop(items),
+    size: fn() => len(items),
+  }
+}
+const s = makeStack()
+s.push("a")
+s.push("b")
+s.push("c")
+print(s.pop(), s.size())
+
+// トップレベル関数どうしの相互再帰
+fn isEven(n) { if (n == 0) { return true } return isOdd(n - 1) }
+fn isOdd(n) { if (n == 0) { return false } return isEven(n - 1) }
+print(isEven(10), isOdd(7), isEven(7))
+
+// while + break/continue
+let i = 0
+let acc = []
+while (true) {
+  i += 1
+  if (i > 10) { break }
+  if (i % 3 != 0) { continue }
+  push(acc, i)
+}
+print(acc)

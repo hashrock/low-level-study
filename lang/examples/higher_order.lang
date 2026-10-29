@@ -1,0 +1,59 @@
+// 高階関数はライブラリではなく言語自身で書ける
+fn map(arr, f) {
+  let out = []
+  for (x in arr) { push(out, f(x)) }
+  return out
+}
+
+fn filter(arr, pred) {
+  let out = []
+  for (x in arr) {
+    if (pred(x)) { push(out, x) }
+  }
+  return out
+}
+
+fn reduce(arr, f, init) {
+  let acc = init
+  for (x in arr) { acc = f(acc, x) }
+  return acc
+}
+
+fn compose(f, g) => fn(x) => f(g(x))
+
+const nums = range(1, 11)
+print("nums:   ", nums)
+print("squares:", map(nums, fn(x) => x * x))
+print("evens:  ", filter(nums, fn(x) => x % 2 == 0))
+print("sum:    ", reduce(nums, fn(a, b) => a + b, 0))
+
+const inc = fn(x) => x + 1
+const double = fn(x) => x * 2
+print("double(inc(5)) =", compose(double, inc)(5))
+
+// filter を使ったクイックソート
+fn qsort(arr) {
+  if (len(arr) <= 1) { return arr }
+  const pivot = arr[0]
+  let rest = []
+  for (i in range(1, len(arr))) { push(rest, arr[i]) }
+  const left = qsort(filter(rest, fn(x) => x < pivot))
+  const right = qsort(filter(rest, fn(x) => x >= pivot))
+  let out = left
+  push(out, pivot)
+  for (x in right) { push(out, x) }
+  return out
+}
+print("sorted: ", qsort([5, 3, 9, 1, 7, 2, 8, 2]))
+print("words:  ", qsort(["pear", "apple", "fig", "banana"]))
+
+// 最初に条件を満たす要素 (break を使用)
+fn find(arr, pred) {
+  let found = nil
+  for (x in arr) {
+    if (pred(x)) { found = x; break }
+  }
+  return found
+}
+print("first > 5:", find(nums, fn(x) => x > 5))
+print("first > 99:", find(nums, fn(x) => x > 99))

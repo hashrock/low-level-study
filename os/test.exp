@@ -1,0 +1,69 @@
+#!/usr/bin/expect -f
+# 非対話テスト: QEMU を起動してシェルにコマンドを流し込み、最後に halt する。
+# 使い方: zig build && ./test.exp
+set timeout 10
+spawn qemu-system-riscv64 -machine virt -bios none -m 128M -nographic -kernel zig-out/bin/kernel.elf
+set qemu_pid [exp_pid]
+
+proc fail {msg} {
+    global qemu_pid
+    puts "\n*** TEST FAILED: $msg"
+    exec kill -9 $qemu_pid
+    exit 1
+}
+
+expect {
+    -re {zigos:/\$ $} {}
+    timeout { fail "no prompt" }
+}
+
+set cmds {
+    "help"
+    "echx\x7fo backspace works"
+    "ls"
+    "cat /etc/motd"
+    "mkdir docs"
+    "cd docs"
+    "pwd"
+    "echo hi > a.txt"
+    "echo second line >> a.txt"
+    "cat a.txt"
+    "ls"
+    "cd .."
+    "ls /home"
+    "ls docs"
+    "rm docs"
+    "rm docs/a.txt"
+    "rm docs"
+    "ls"
+    "nosuchcmd"
+    "uptime"
+    "run counter &"
+    "ps"
+    "run spin &"
+    "ps"
+    "uptime"
+    "run spin"
+    "uptime"
+}
+foreach c $cmds {
+    send -- "$c\r"
+    expect {
+        -re {zigos:[^$]*\$ $} {}
+        timeout { fail "timeout after '$c'" }
+    }
+}
+# counter (バックグラウンド) の出力が出終わるのを待つ
+set timeout 8
+expect {
+    -re {counter pid=[0-9]+\] 5} {}
+    timeout { fail "counter did not finish" }
+}
+send -- "ps\r"
+expect -re {zigos:[^$]*\$ $}
+send -- "halt\r"
+expect {
+    eof {}
+    timeout { fail "halt did not power off" }
+}
+puts "\n*** TEST PASSED"

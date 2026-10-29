@@ -1,0 +1,11 @@
+{the: 3, cat: 1, sat: 1, on: 1, mat: 1, end: 1}
+the -> 3
+cat -> 1
+sat -> 1
+on -> 1
+mat -> 1
+end -> 1
+keys: ["the", "cat", "sat", "on", "mat", "end"] size: 6
+Alice 31 dev
+map array number nil function
+odd sum: 25

@@ -1,0 +1,5 @@
+// minicc 専用: 数値は整数なので / は 0 方向に切り捨て (minilang 本家は 3.5 などを表示)
+print(7 / 2, -7 / 2, 10 / 5, 1 / 3)
+let big = 1
+for (i in range(60)) { big = big * 2 }
+print(big)

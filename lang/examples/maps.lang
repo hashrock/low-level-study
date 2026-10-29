@@ -1,0 +1,28 @@
+// マップ (挿入順を保持) と単語カウント
+const text = ["the", "cat", "sat", "on", "the", "mat", "the", "end"]
+let counts = {}
+for (w in text) {
+  if (has(counts, w)) {
+    counts[w] += 1
+  } else {
+    counts[w] = 1
+  }
+}
+print(counts)
+for (k in counts) {        // マップの for-in はキーを列挙
+  print(k, "->", counts[k])
+}
+print("keys:", keys(counts), "size:", len(counts))
+
+const user = {name: "Alice", age: 30, tags: ["admin", "dev"]}
+user.age = 31
+print(user.name, user.age, user.tags[1])
+print(type(user), type(user.tags), type(user.age), type(nil), type(print))
+
+// continue の例: 奇数だけ合計
+let sum = 0
+for (i in range(10)) {
+  if (i % 2 == 0) { continue }
+  sum += i
+}
+print("odd sum:", sum)

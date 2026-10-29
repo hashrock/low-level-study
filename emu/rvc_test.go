@@ -1,0 +1,96 @@
+package main
+
+import "testing"
+
+// 圧縮命令の展開テスト。
+// 同じアセンブリを C 拡張あり/なしでアセンブルし (zig cc / LLVM)、
+// 「16 ビット命令」と「対応する 32 ビット命令」の組を取り出したもの。
+var rvcPairs = []struct{ c, full uint32 }{
+	{0x1fe0, 0x3fc10413},
+	{0x003c, 0x00810793},
+	{0x5de8, 0x07c5a503},
+	{0x43c4, 0x0047a483},
+	{0x7de8, 0x0f85b503},
+	{0x6784, 0x0087b483},
+	{0xdde8, 0x06a5ae23},
+	{0xfde8, 0x0ea5bc23},
+	{0x0001, 0x00000013},
+	{0x1501, 0xfe050513},
+	{0x0ffd, 0x01ff8f93},
+	{0x357d, 0xfff5051b},
+	{0x297d, 0x01f9091b},
+	{0x5501, 0xfe000513},
+	{0x42fd, 0x01f00293},
+	{0x7101, 0xe0010113},
+	{0x617d, 0x1f010113},
+	{0x0141, 0x01010113},
+	{0x657d, 0x0001f537},
+	{0x7301, 0xfffe0337},
+	{0x917d, 0x03f55513},
+	{0x8785, 0x4017d793},
+	{0x9881, 0xfe04f493},
+	{0x88fd, 0x01f4f493},
+	{0x8d0d, 0x40b50533},
+	{0x8c3d, 0x00f44433},
+	{0x8e55, 0x00d66633},
+	{0x8f65, 0x00977733},
+	{0x9d0d, 0x40b5053b},
+	{0x9d3d, 0x00f5053b},
+	{0xb001, 0x801ff06f},
+	{0xaffd, 0x7fe0006f},
+	{0xa019, 0x0060006f},
+	{0xd101, 0xf00500e3},
+	{0xecfd, 0x0e049f63},
+	{0xc391, 0x00078263},
+	{0xfffd, 0xfe079fe3},
+	{0x157e, 0x03f51513},
+	{0x0e06, 0x001e1e13},
+	{0x557e, 0x0fc12503},
+	{0x4082, 0x00012083},
+	{0x757e, 0x1f813503},
+	{0x6da2, 0x00813d83},
+	{0x8082, 0x00008067},
+	{0x8282, 0x00028067},
+	{0x852e, 0x00b00533}, // c.mv は仕様上 add rd, x0, rs2 に展開 (アセンブラは addi を選ぶ)
+	{0x8fee, 0x01b00fb3},
+	{0x9002, 0x00100073},
+	{0x9082, 0x000080e7},
+	{0x9f02, 0x000f00e7},
+	{0x952e, 0x00b50533},
+	{0x9dfe, 0x01fd8db3},
+	{0xdfaa, 0x0ea12e23},
+	{0xc006, 0x00112023},
+	{0xffaa, 0x1ea13c23},
+	{0xe46e, 0x01b13423},
+}
+
+func TestExpandCompressed(t *testing.T) {
+	for _, p := range rvcPairs {
+		got, ok := expandCompressed(p.c)
+		if !ok || got != p.full {
+			t.Errorf("0x%04x: expanded to 0x%08x (%s), want 0x%08x (%s)",
+				p.c, got, disasmBody(Decode(got), 0), p.full, disasmBody(Decode(p.full), 0))
+		}
+	}
+}
+
+func TestIllegalCompressed(t *testing.T) {
+	for _, c := range []uint32{0x0000, 0x2000 /* c.fld */, 0x6101 /* c.addi16sp 0 */, 0x8002 /* c.jr x0 */} {
+		if raw, ok := expandCompressed(c); ok {
+			t.Errorf("0x%04x should be illegal, got 0x%08x", c, raw)
+		}
+	}
+}
+
+// 圧縮命令の PC は 2 進む。jal のリンクアドレスも +2。
+func TestCompressedStep(t *testing.T) {
+	c := newTestCPU()
+	c.Bus.Store(testBase, 2, 0x0505)   // c.addi a0, a0, 1
+	c.Bus.Store(testBase+2, 2, 0x9082) // c.jalr ra
+	c.X[1] = testBase + 0x40
+	c.Step()
+	c.Step()
+	if c.X[10] != 1 || c.PC != testBase+0x40 || c.X[1] != testBase+4 {
+		t.Errorf("a0=%d pc=0x%x ra=0x%x", c.X[10], c.PC, c.X[1])
+	}
+}

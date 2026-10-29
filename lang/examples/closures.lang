@@ -1,0 +1,51 @@
+// クロージャで状態を持つカウンタ
+fn makeCounter() {
+  let count = 0
+  return fn() {
+    count += 1
+    return count
+  }
+}
+
+const c1 = makeCounter()
+const c2 = makeCounter()
+c1()
+c1()
+print("c1:", c1())   // 3
+print("c2:", c2())   // 1 (c1 とは独立)
+
+// 引数を捕捉する関数工場
+fn adder(n) => fn(x) => x + n
+const add10 = adder(10)
+print("add10(5):", add10(5))
+
+// for-in のループ変数は反復ごとに新しい束縛 (JS の var の罠がない)
+let fns = []
+for (i in range(3)) {
+  push(fns, fn() => i * 100)
+}
+for (f in fns) { print(f()) }
+
+// 2 つのクロージャが同じ変数を共有する
+fn makeAccount(balance) {
+  return {
+    deposit: fn(x) { balance += x; return balance },
+    withdraw: fn(x) {
+      if (x > balance) { return "insufficient funds" }
+      balance -= x
+      return balance
+    },
+  }
+}
+const acct = makeAccount(100)
+print(acct.deposit(50))
+print(acct.withdraw(30))
+print(acct.withdraw(1000))
+
+// ブロックスコープ
+let x = "outer"
+{
+  let x = "inner"
+  print(x)
+}
+print(x)

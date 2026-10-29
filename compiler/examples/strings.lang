@@ -1,0 +1,15 @@
+// 文字列・表示・比較
+const greet = "hello"
+print(greet + ", " + "world", len(greet), greet[1])
+print(["tab\there", "quote\"", "back\\slash", "nl\nx"])
+print("apple" < "banana", "b" < "a", "abc" <= "abc", "ab" < "abc")
+print("x" == "x", "x" != "y", 1 == 1, nil == nil, true != false)
+print(str(123) + str(-45), str([1, "two", nil, true]))
+print(type(1), type("s"), type([]), type({}), type(nil), type(true), type(fn() => 1), type(len))
+print(-7 + 3, 6 * -7, 0 - 100, 17 % 5, -17 % 5)
+print(nil || "default", false && 1, 1 && 2, !nil, !0)
+let m = {}
+m["k"] = [1, 2]
+m.k[0] = 99
+print(m, has(m, "k"), keys(m))
+print(len, print)
