@@ -8,12 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"minicc/minicc"
 )
 
 var update = flag.Bool("update", false, "examples/*.out を現在の出力で書き換える")
 
-// ../asm と ../emu を一度だけ go build しておく (go run を毎回するより速い)
-var asmBin, emuBin, binErr string
+// ../emu を一度だけ go build しておく (go run を毎回するより速い)。
+// コンパイル・アセンブル・リンクは minicc / rvasm パッケージでプロセス内で行う。
+var emuBin, binErr string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -21,13 +24,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	asmBin, emuBin = filepath.Join(dir, "rvasm"), filepath.Join(dir, "rvemu")
-	for name, bin := range map[string]string{"asm": asmBin, "emu": emuBin} {
-		c := exec.Command("go", "build", "-o", bin, ".")
-		c.Dir = toolDir(name)
-		if out, err := c.CombinedOutput(); err != nil {
-			binErr = fmt.Sprintf("cannot build ../%s: %v\n%s", name, err, out)
-		}
+	emuBin = filepath.Join(dir, "rvemu")
+	c := exec.Command("go", "build", "-o", emuBin, ".")
+	c.Dir = toolDir("emu")
+	if out, err := c.CombinedOutput(); err != nil {
+		binErr = fmt.Sprintf("cannot build ../emu: %v\n%s", err, out)
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -40,12 +41,15 @@ func compileAndRun(t *testing.T, src string) (string, int) {
 	if binErr != "" {
 		t.Skip(binErr)
 	}
-	asm, err := Compile(src)
+	exe, err := minicc.Build("prog.lang", src)
 	if err != nil {
-		return err.Error() + "\n", -1
+		if _, ok := err.(*minicc.LangError); ok {
+			return err.Error() + "\n", -1
+		}
+		t.Fatal(err)
 	}
 	prog := filepath.Join(t.TempDir(), "prog")
-	if err := Build(asm, prog, func(args ...string) *exec.Cmd { return exec.Command(asmBin, args...) }); err != nil {
+	if err := os.WriteFile(prog, exe, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command(emuBin, "run", "--max-insts", "2000000000", prog).CombinedOutput()
@@ -144,12 +148,12 @@ c = 2`, "cannot assign to const c"},
 
 func TestEmitIsDeterministic(t *testing.T) {
 	src, _ := os.ReadFile("examples/closures.lang")
-	a, err := Compile(string(src))
+	a, err := minicc.Compile(string(src))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := Compile(string(src))
-	if a != b {
+	b, _ := minicc.Compile(string(src))
+	if a.Asm != b.Asm {
 		t.Error("emit output differs between runs")
 	}
 }

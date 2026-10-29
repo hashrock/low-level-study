@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minilang デバッガ</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .layout { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .col { display: grid; gap: 12px; min-width: 0; }
+  @media (max-width: 1180px) { .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .col.state { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); } }
+  @media (max-width: 760px) { .layout { grid-template-columns: minmax(0, 1fr); } .col.state { grid-template-columns: minmax(0, 1fr); } }
+
+  .toolbar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+  .toolbar select { max-width: 100%; }
+  #status { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .badge.st-paused { border-color: var(--accent); color: var(--accent); }
+  .badge.st-running { border-color: var(--warn); color: var(--warn); }
+  .badge.st-done { border-color: var(--ok); color: var(--ok); }
+  .badge.st-error { border-color: var(--err); color: var(--err); }
+
+  details.notes { margin-bottom: 12px; }
+  details.notes summary { cursor: pointer; font-weight: 600; }
+  details.notes ul { margin: 6px 0 0; padding-left: 1.3em; }
+  details.notes li { margin: 2px 0; }
+  details.notes code { background: var(--panel-2); padding: 0 3px; border-radius: 3px; }
+
+  /* エディタ: textarea の後ろに同じ行割りの「背景レイヤ」を置いて行をハイライトする */
+  .editor { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); max-height: 58vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+  .gutter, .backdrop, .editor textarea { font-family: var(--mono); font-size: 12.5px; line-height: 18px; }
+  .gutter { padding: 8px 6px 8px 8px; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid var(--border); position: sticky; left: 0; background: var(--panel-2); z-index: 2; }
+  .gutter div { height: 18px; cursor: pointer; }
+  .gutter div:hover { color: var(--accent); }
+  .ed-body { position: relative; }
+  .backdrop { position: absolute; inset: 0; padding: 8px 0; margin: 0; color: transparent; white-space: pre; tab-size: 4; pointer-events: none; overflow: hidden; }
+  .backdrop .ln { height: 18px; padding: 0 8px; }
+  .backdrop .ln.linked { background: var(--hl); }
+  .backdrop .ln.current { background: var(--accent-soft); }
+  .backdrop .ln.linked.current, .backdrop .ln.linked.errline { box-shadow: inset 4px 0 0 var(--warn); }
+  .backdrop .ln.errline { background: color-mix(in srgb, var(--err) 18%, transparent); }
+  .backdrop mark { color: transparent; background: none; border-radius: 2px; box-shadow: 0 0 0 1.5px var(--accent); }
+  .backdrop .errline mark { box-shadow: 0 0 0 1.5px var(--err); }
+  .editor textarea { position: relative; display: block; z-index: 1; width: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; padding: 8px; background: transparent; color: var(--text); caret-color: var(--text); white-space: pre; overflow: hidden; resize: none; outline: none; tab-size: 4; }
+  .gutter div.current { color: var(--accent); font-weight: 700; }
+  .gutter div.errline { color: var(--err); font-weight: 700; }
+
+  .terminal { min-height: 90px; max-height: 32vh; }
+  .terminal .err { color: var(--err); }
+
+  /* 逆アセンブル */
+  .dis { max-height: 78vh; overflow: auto; font-family: var(--mono); font-size: 12px; }
+  .dis .proto { margin: 0 0 10px; }
+  .dis .phead { position: sticky; top: 0; background: var(--panel); padding: 2px 0; color: var(--muted); border-bottom: 1px solid var(--border); z-index: 1; }
+  .dis .phead b { color: var(--c4); }
+  .ins { display: grid; grid-template-columns: 1.2em 3.2em 3.6em minmax(0, 1fr); gap: 0 6px; padding: 0 4px; cursor: pointer; border-radius: 3px; white-space: nowrap; }
+  .ins:hover { background: var(--panel-2); }
+  .ins .ip, .ins .pos { color: var(--muted); }
+  .ins .op { overflow: hidden; text-overflow: ellipsis; }
+  .ins .op b { font-weight: 600; }
+  .ins .cm { color: var(--muted); }
+  .ins .mk { color: var(--accent); font-weight: 700; }
+  .ins.linked { background: var(--hl); }
+  .ins.current { background: var(--accent-soft); }
+  .ins.current.linked { box-shadow: inset 3px 0 0 var(--warn); }
+  .ins.current.errins { background: color-mix(in srgb, var(--err) 18%, transparent); }
+
+  /* 状態パネル */
+  .curbox { font-family: var(--mono); font-size: 13px; }
+  .curbox .big { font-size: 15px; font-weight: 600; }
+  .curbox .desc { font-family: var(--sans); font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .stack { display: flex; flex-direction: column; gap: 2px; font-family: var(--mono); font-size: 12px; max-height: 46vh; overflow: auto; }
+  .slot { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 1px 6px; border-left: 4px solid var(--fc, var(--border)); background: var(--panel-2); border-radius: 3px; }
+  .slot .idx { color: var(--muted); text-align: right; }
+  .slot .role { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 14em; }
+  .slot .val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot.top { outline: 1.5px solid var(--accent); }
+  .frames { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+  .frame { border: 1px solid var(--border); border-left: 4px solid var(--fc, var(--border)); border-radius: var(--radius); padding: 4px 6px; cursor: pointer; }
+  .frame.current { background: var(--accent-soft); }
+  .frame .fh { font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .frame .fh b { color: var(--c4); }
+  .frame table.kv { margin-top: 2px; }
+  table.kv td.v { white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
+  .t-number { color: var(--c1); } .t-string { color: var(--c2); } .t-bool { color: var(--c3); }
+  .t-nil, .t-empty, .t-builtin { color: var(--muted); } .t-array, .t-map { color: var(--c4); } .t-function { color: var(--c6); }
+  .cellref { display: inline-block; padding: 0 5px; border-radius: 999px; border: 1.5px solid var(--cc, var(--border)); color: var(--cc, var(--muted)); font-size: 11px; line-height: 15px; margin-right: 4px; }
+  .cells { display: flex; flex-direction: column; gap: 6px; }
+  .cell { border: 1.5px solid var(--cc); border-radius: var(--radius); padding: 4px 8px; font-family: var(--mono); font-size: 12px; }
+  .cell ul { margin: 2px 0 0; padding-left: 1.2em; color: var(--muted); font-family: var(--sans); font-size: 12px; }
+  .clo { font-family: var(--mono); font-size: 12px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+  .sub { font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  .empty { color: var(--muted); font-size: 12px; }
+  label.chk { font-size: 12px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; }
+  .panel h2 .badge { text-transform: none; letter-spacing: 0; margin-left: 6px; }
+  #errbox { margin-top: 6px; }
+</style>
+</head>
+<body>
+<header class="top"><a href="../">← 一覧</a><h1>minilang デバッガ</h1><span class="muted">JS 風の小さな言語 → バイトコード → スタック VM を 1 命令ずつ</span></header>
+<main>
+  <div id="loading" class="loading">wasm を読み込み中…</div>
+  <div id="app" hidden>
+    <details class="notes panel" open>
+      <summary>試してみよう</summary>
+      <ul>
+        <li><b>「ミニ: fib(4)」</b>を選んで <b>行ステップ</b>・<b>命令ステップ</b>。<code>CALL</code> のたびに「呼び出しフレーム」が 1 段増え、<code>RETURN</code> で戻ります。値スタックはフレームごとに色分け（callee・ローカルのセル・一時値）。</li>
+        <li><code>ADD</code> や <code>LT</code> の前後を命令ステップで見ると、スタックの上 2 つが pop されて結果 1 つが push されるのが分かります。</li>
+        <li><b>「ミニ: 1 + "a"」</b>は <code>ADD</code> の瞬間に実行時エラー。行:列 が赤く表示され、エラー時点のスタックとフレームがそのまま残ります（JS なら <code>"1a"</code>）。</li>
+        <li><b>「ミニ: クロージャとセル」</b>や <code>closures</code>：for-in の反復ごとに <code>DEF_LOCAL</code> が新しいセル（箱）を作るので 3 つのクロージャは別々のセル。<code>deposit</code> と <code>get</code> は同じセル <code>balance</code> を共有します（同じ色・「共有」バッジ）。</li>
+        <li>バイトコードの行をクリック → 対応するソース行が光ります。ソースの行（または行番号）をクリック → その行の命令が光ります。</li>
+        <li><b>「ミニ: 無限ループ」</b>も実行できます。<b>一時停止</b>で止められ、2000 万命令ごとに自動で一時停止します。</li>
+      </ul>
+    </details>
+
+    <div class="toolbar panel">
+      <select id="example" aria-label="サンプル"></select>
+      <button id="btnRun" class="primary" title="最初から最後まで実行">▶ 実行</button>
+      <button id="btnCompile" title="コンパイルして逆アセンブルを表示（実行位置は先頭）">コンパイル</button>
+      <span class="sep"></span>
+      <button id="btnInstr" title="1 命令だけ実行">命令ステップ</button>
+      <button id="btnLine" title="この行が終わるまで（関数呼び出しの中では止まらない）">行ステップ</button>
+      <button id="btnOut" title="今の関数から戻るまで">関数から出る</button>
+      <button id="btnCont" title="最後まで（または一時停止まで）">続行</button>
+      <button id="btnPause" disabled>一時停止</button>
+      <button id="btnReset" title="同じプログラムを最初から">リセット</button>
+      <span id="status"><span id="stBadge" class="badge">未コンパイル</span><span id="stInfo" class="muted mono"></span></span>
+    </div>
+
+    <div class="layout">
+      <div class="col">
+        <section class="panel">
+          <h2>ソース</h2>
+          <div class="editor" id="editor">
+            <div class="gutter" id="gutter"></div>
+            <div class="ed-body" id="edBody">
+              <pre class="backdrop" id="backdrop" aria-hidden="true"></pre>
+              <textarea id="src" spellcheck="false" wrap="off" autocapitalize="off" autocomplete="off" aria-label="ソースコード"></textarea>
+            </div>
+          </div>
+          <div id="errbox"></div>
+        </section>
+        <section class="panel">
+          <h2>出力</h2>
+          <pre class="terminal" id="out"></pre>
+        </section>
+      </div>
+      <div class="col">
+        <section class="panel">
+          <h2>バイトコード <span class="badge" id="disInfo">—</span></h2>
+          <div class="dis" id="dis"><div class="empty">「コンパイル」かステップ実行で表示されます。</div></div>
+        </section>
+      </div>
+      <div class="col state">
+        <section class="panel">
+          <h2>次に実行する命令</h2>
+          <div class="curbox" id="cur"><div class="empty">—</div></div>
+        </section>
+        <section class="panel">
+          <h2>値スタック <span class="badge" id="spInfo">sp 0</span></h2>
+          <div class="stack" id="stack"><div class="empty">—</div></div>
+        </section>
+        <section class="panel">
+          <h2>呼び出しフレーム <span class="badge" id="depthInfo">0</span></h2>
+          <div class="frames" id="frames"><div class="empty">—</div></div>
+        </section>
+        <section class="panel">
+          <h2>クロージャとセル（箱）</h2>
+          <div id="cells"><div class="empty">—</div></div>
+        </section>
+        <section class="panel">
+          <h2>グローバル <label class="chk"><input type="checkbox" id="showBuiltins">組み込みも表示</label></h2>
+          <div id="globals"><div class="empty">—</div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="../shared/wasm_exec.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const CHUNK = 200000;          // 1 フレームで実行する最大命令数
+const AUTO_PAUSE = 20000000;   // この命令数ごとに自動で一時停止
+
+const MINI = [
+  { name: "ミニ: fib(4)", src: "// 再帰呼び出しでフレームが積まれる様子を見る\nfn fib(n) {\n  if (n < 2) { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nprint(fib(4))\n" },
+  { name: 'ミニ: 1 + "a"', src: '// JS なら "1a" になるが、minilang では実行時エラー\nlet a = 1\nlet b = "a"\nprint("before")\nprint(a + b)\nprint("ここには来ない")\n' },
+  { name: "ミニ: クロージャとセル", src: "// for-in の反復ごとに新しいセル (箱) ができる\nlet fns = []\nfor (i in range(3)) {\n  push(fns, fn() => i * 100)\n}\n\n// 2 つのクロージャが 1 つのセルを共有する\nfn makeAccount(balance) {\n  return {\n    deposit: fn(x) { balance += x; return balance },\n    get: fn() => balance,\n  }\n}\nconst acct = makeAccount(100)\nacct.deposit(50)\nprint(fns[2](), acct.get())\n" },
+  { name: "ミニ: 無限ループ", src: "// 一時停止で止められる\nlet i = 0\nwhile (true) {\n  i += 1\n}\n" },
+];
+
+// 命令の説明 (README の命令一覧より)
+const OPDESC = {
+  CONST: "定数表の値を積む", NIL: "nil を積む", TRUE: "true を積む", FALSE: "false を積む", POP: "1 つ捨てる",
+  GET_LOCAL: "ローカル変数 (セル) の値を積む", SET_LOCAL: "スタックトップをローカルのセルに代入 (pop しない)",
+  DEF_LOCAL: "pop した値で新しいセルを作り slot に置く", GET_FREE: "クロージャが捕捉したセルの値を積む",
+  SET_FREE: "捕捉セルに代入 (pop しない)", GET_GLOBAL: "グローバル変数を積む (未定義ならエラー)",
+  SET_GLOBAL: "グローバルに代入 (未定義・const はエラー)", DEF_GLOBAL: "pop してグローバルを定義",
+  ADD: "a b → a+b (型が違えばエラー)", SUB: "a b → a-b", MUL: "a b → a*b", DIV: "a b → a/b (0 除算はエラー)", MOD: "a b → a%b",
+  EQ: "a b → a==b (型が違えば false)", NE: "a b → a!=b", LT: "a b → a<b", LE: "a b → a<=b", GT: "a b → a>b", GE: "a b → a>=b",
+  NEG: "a → -a", NOT: "a → !a", JUMP: "無条件ジャンプ", JUMP_IF_FALSE: "pop して偽ならジャンプ",
+  JUMP_IF_FALSE_OR_POP: "&&: 偽なら残してジャンプ、真なら pop", JUMP_IF_TRUE_OR_POP: "||: 真なら残してジャンプ、偽なら pop",
+  CALL: "f a1..an → 戻り値 (クロージャなら新しいフレームを作る)", RETURN: "戻り値を持ってフレームを抜ける",
+  CLOSURE: "関数プロトタイプと捕捉セルからクロージャを作る", ARRAY: "n 個の値 → 配列", MAP: "k1 v1 .. kn vn → マップ",
+  INDEX: "obj key → obj[key]", SET_INDEX: "obj key v → v (obj[key] = v)", ITER_PREP: "配列はそのまま、マップはキーの配列に",
+  FOR_ITER: "隠しローカルのコレクションの次の要素を積む。終わりならジャンプ",
+};
+
+let api = null;
+let examples = [];
+let loaded = false;        // 今のソースで Session がある
+let protos = [];
+let snap = null, prevSnap = null;
+let status = "idle";       // idle / paused / running / done / error
+let running = false, pauseReq = false, sinceAuto = 0;
+let errPos = null;         // {line, col}
+let linkedLine = 0;        // クリックで選んだソース行
+
+// ---------- エディタ ----------
+const ta = $("src");
+function srcLines() { return ta.value.split("\n"); }
+function layoutEditor() {
+  const lines = srcLines();
+  const maxLen = Math.max(20, ...lines.map((l) => l.replace(/\t/g, "    ").length));
+  ta.style.height = (lines.length * 18 + 16) + "px";
+  sizeEditor(maxLen);
+  $("gutter").innerHTML = lines.map((_, i) => '<div data-line="' + (i + 1) + '">' + (i + 1) + "</div>").join("");
+  paintEditor();
+}
+let charW = 0, lastMaxLen = 20;
+function sizeEditor(maxLen) {
+  if (maxLen) lastMaxLen = maxLen;
+  if (!charW) {
+    const m = document.createElement("span");
+    m.className = "backdrop"; m.style.position = "absolute"; m.style.visibility = "hidden"; m.textContent = "0".repeat(50);
+    document.body.append(m); charW = m.getBoundingClientRect().width / 50; m.remove();
+  }
+  const avail = $("editor").clientWidth - $("gutter").offsetWidth;
+  $("edBody").style.width = Math.max(avail, Math.ceil((lastMaxLen + 2) * charW + 16)) + "px";
+}
+window.addEventListener("resize", () => sizeEditor());
+function paintEditor() {
+  const lines = srcLines();
+  const cur = snap && (status === "paused" || status === "error" || status === "done") ? snap.cur : null;
+  let html = "";
+  lines.forEach((text, i) => {
+    const n = i + 1;
+    const cls = ["ln"];
+    let markCol = 0;
+    if (errPos && errPos.line === n) { cls.push("errline"); markCol = errPos.col; }
+    else if (cur && cur.line === n && status !== "done") { cls.push("current"); markCol = cur.col; }
+    if (linkedLine === n) cls.push("linked");
+    let body = esc(text) || " ";
+    if (markCol > 0) {
+      const chars = Array.from(text);
+      const k = markCol - 1;
+      if (k < chars.length) body = esc(chars.slice(0, k).join("")) + "<mark>" + esc(chars[k]) + "</mark>" + esc(chars.slice(k + 1).join(""));
+    }
+    html += '<div class="' + cls.join(" ") + '">' + body + "</div>";
+  });
+  $("backdrop").innerHTML = html;
+  for (const d of $("gutter").children) {
+    const n = +d.dataset.line;
+    d.className = errPos && errPos.line === n ? "errline" : (cur && cur.line === n && status !== "done" ? "current" : "");
+  }
+}
+function scrollEditorTo(line) {
+  const ed = $("editor");
+  const y = (line - 1) * 18 + 8;
+  if (y < ed.scrollTop || y + 18 > ed.scrollTop + ed.clientHeight) ed.scrollTop = Math.max(0, y - ed.clientHeight / 3);
+}
+function caretLine() { return ta.value.slice(0, ta.selectionStart).split("\n").length; }
+ta.addEventListener("input", () => {
+  loaded = false; protos = []; snap = prevSnap = null; errPos = null; linkedLine = 0;
+  setStatus("idle"); layoutEditor(); renderDis(); renderState(); $("errbox").innerHTML = "";
+});
+ta.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") { e.preventDefault(); document.execCommand("insertText", false, "  "); }
+});
+function linkFromCaret() { selectLine(caretLine(), false); }
+ta.addEventListener("click", linkFromCaret);
+ta.addEventListener("keyup", (e) => { if (e.key.startsWith("Arrow")) linkFromCaret(); });
+$("gutter").addEventListener("click", (e) => { const d = e.target.closest("[data-line]"); if (d) selectLine(+d.dataset.line, false); });
+
+// ソース行 ⇔ 命令の対応を光らせる
+function selectLine(line, fromDis) {
+  linkedLine = line;
+  paintEditor();
+  let first = null;
+  for (const el of document.querySelectorAll(".ins")) {
+    const on = +el.dataset.line === line;
+    el.classList.toggle("linked", on);
+    if (on && !first) first = el;
+  }
+  if (fromDis) scrollEditorTo(line);
+  else if (first) scrollInto(first, $("dis"));
+}
+function scrollInto(el, box) {
+  const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+  if (er.top < br.top + 24 || er.bottom > br.bottom) box.scrollTop += er.top - br.top - box.clientHeight / 3;
+}
+
+// ---------- 出力 ----------
+function setOut(text) { $("out").textContent = text; }
+function appendOut(text) { if (text) $("out").append(document.createTextNode(text)); $("out").scrollTop = 1e9; }
+function appendErr(err) {
+  const s = document.createElement("span");
+  s.className = "err";
+  s.textContent = err.text + "\n";
+  $("out").append(s);
+  $("out").scrollTop = 1e9;
+}
+
+// ---------- 状態表示 ----------
+const ST_LABEL = { idle: "未コンパイル", ready: "準備完了", paused: "一時停止", running: "実行中", done: "終了", error: "エラー" };
+function setStatus(st, info) {
+  status = st;
+  const b = $("stBadge");
+  b.textContent = ST_LABEL[st];
+  b.className = "badge st-" + (st === "ready" ? "paused" : st);
+  $("stInfo").textContent = info || (snap ? snap.steps.toLocaleString() + " 命令" : "");
+  $("btnPause").disabled = !running;
+  for (const id of ["btnRun", "btnCompile", "btnInstr", "btnLine", "btnOut", "btnCont", "btnReset", "example"]) $(id).disabled = running;
+  const fin = st === "done" || st === "error";
+  for (const id of ["btnInstr", "btnLine", "btnOut", "btnCont"]) if (fin && loaded) $(id).disabled = true;
+}
+
+function hex4(n) { return String(n).padStart(4, "0"); }
+function renderDis() {
+  const box = $("dis");
+  if (!protos.length) { box.innerHTML = '<div class="empty">「コンパイル」かステップ実行で表示されます。</div>'; $("disInfo").textContent = "—"; return; }
+  let n = 0, html = "";
+  for (const p of protos) {
+    const caps = p.freeNames.length ? " 捕捉: " + p.freeNames.map(esc).join(", ") : "";
+    const locs = p.localNames.length ? " ローカル: " + p.localNames.map(esc).join(", ") : "";
+    html += '<div class="proto"><div class="phead">fn <b>' + esc(p.name) + "</b> 引数 " + p.params + locs + caps + "</div>";
+    for (const c of p.code) {
+      n++;
+      const args = c.args.join(" ");
+      html += '<div class="ins" data-p="' + p.id + '" data-ip="' + c.ip + '" data-line="' + c.line + '"><span class="mk"></span><span class="ip">' + hex4(c.ip) +
+        '</span><span class="pos">' + c.line + ":" + c.col + '</span><span class="op"><b>' + esc(c.op) + "</b> " + esc(args) +
+        (c.comment ? ' <span class="cm">; ' + esc(c.comment) + "</span>" : "") + "</span></div>";
+    }
+    html += "</div>";
+  }
+  box.innerHTML = html;
+  $("disInfo").textContent = protos.length + " 関数 / " + n + " 命令";
+}
+$("dis").addEventListener("click", (e) => {
+  const el = e.target.closest(".ins");
+  if (el) selectLine(+el.dataset.line, true);
+});
+
+function markCurrentIns() {
+  let curEl = null;
+  for (const el of document.querySelectorAll(".ins.current")) { el.classList.remove("current", "errins"); el.querySelector(".mk").textContent = ""; }
+  if (snap && status !== "idle") {
+    curEl = document.querySelector('.ins[data-p="' + snap.cur.proto + '"][data-ip="' + snap.cur.ip + '"]');
+    if (curEl) {
+      curEl.classList.add("current");
+      if (status === "error") curEl.classList.add("errins");
+      curEl.querySelector(".mk").textContent = status === "done" ? "■" : "▶";
+      scrollInto(curEl, $("dis"));
+    }
+  }
+}
+
+const TYPE_CLASS = (t) => "t-" + t.replace(/^cell:/, "");
+function cellColor(id) { return "var(--c" + (((id - 1) % 6) + 1) + ")"; }
+function cellChip(id) { return '<span class="cellref" style="--cc:' + cellColor(id) + '">セル#' + id + "</span>"; }
+function vhtml(v) {
+  let pre = "";
+  if (v.t.startsWith("cell:")) pre = cellChip(v.id);
+  return pre + '<span class="' + TYPE_CLASS(v.t) + '" title="' + esc(v.t) + '">' + esc(v.s) + "</span>";
+}
+function frameColor(i) { return "var(--c" + ((i % 6) + 1) + ")"; }
+
+function renderState() {
+  if (!snap) {
+    for (const id of ["cur", "stack", "frames", "cells", "globals"]) $(id).innerHTML = '<div class="empty">—</div>';
+    $("spInfo").textContent = "sp 0"; $("depthInfo").textContent = "0";
+    markCurrentIns(); paintEditor();
+    return;
+  }
+  const s = snap, p = prevSnap;
+  // 現在の命令
+  const c = s.cur;
+  const lead = status === "done" ? "終了（最後に実行した命令）" : status === "error" ? "ここでエラー" : "";
+  $("cur").innerHTML = (lead ? '<div class="sub">' + lead + "</div>" : "") +
+    '<div class="big">' + esc(c.op) + " " + esc(c.args.join(" ")) + (c.comment ? ' <span class="muted">; ' + esc(c.comment) + "</span>" : "") + "</div>" +
+    '<div class="muted">fn ' + esc(c.func) + " · ip " + hex4(c.ip) + " · 行 " + c.line + ":" + c.col + "</div>" +
+    '<div class="desc">' + esc(OPDESC[c.op] || "") + "</div>" +
+    (s.result && status === "done" ? '<div class="sub">戻り値: ' + vhtml(s.result) + "</div>" : "");
+
+  // 値スタック（上が top）
+  $("spInfo").textContent = "sp " + s.sp;
+  const prevStack = new Map((p ? p.stack : []).map((x) => [x.i, x.v.t + "|" + x.v.s + "|" + (x.v.id || 0)]));
+  let sh = "";
+  for (let k = s.stack.length - 1; k >= 0; k--) {
+    const x = s.stack[k];
+    const changed = p && prevStack.get(x.i) !== x.v.t + "|" + x.v.s + "|" + (x.v.id || 0);
+    const role = x.role === "local" ? "ローカル " + x.name : x.role === "callee" ? "callee " + x.name : "一時値";
+    const fr = x.frame >= 0 ? "#" + x.frame + " " : "";
+    sh += '<div class="slot' + (changed ? " changed" : "") + (k === s.stack.length - 1 ? " top" : "") + '" style="--fc:' + (x.frame >= 0 ? frameColor(x.frame) : "var(--border)") + '">' +
+      '<span class="idx">' + x.i + '</span><span class="val">' + vhtml(x.v) + '</span><span class="role">' + esc(fr + role) + "</span></div>";
+  }
+  if (s.stackOmitted) sh += '<div class="empty">… 下に ' + s.stackOmitted + " 個省略</div>";
+  $("stack").innerHTML = sh || '<div class="empty">（空）</div>';
+
+  // フレーム（内側が上）
+  $("depthInfo").textContent = String(s.frames.length + s.frameOmitted);
+  const prevLocals = new Map();
+  if (p) p.frames.forEach((f, fi) => f.locals.concat(f.free.map((x) => ({ ...x, slot: "f" + x.slot }))).forEach((l) => prevLocals.set((fi + p.frameOmitted) + "/" + l.slot, l.v.s + "|" + l.cell)));
+  let fh = "";
+  for (let k = s.frames.length - 1; k >= 0; k--) {
+    const f = s.frames[k], fi = k + s.frameOmitted;
+    const rows = (list, free) => list.map((l) => {
+      const key = fi + "/" + (free ? "f" : "") + l.slot;
+      const ch = p && prevLocals.get(key) !== l.v.s + "|" + l.cell;
+      return "<tr" + (ch ? ' class="changed"' : "") + "><th>" + esc(l.name) + (l.hidden ? ' <span class="muted">(隠し)</span>' : "") + "</th><td>" + (l.cell ? cellChip(l.cell) : "") + "</td><td class=\"v\">" + vhtml(l.v) + "</td></tr>";
+    }).join("");
+    const loc = f.locals.length ? '<table class="kv">' + rows(f.locals, false) + "</table>" : "";
+    const fre = f.free.length ? '<div class="sub">捕捉したセル</div><table class="kv">' + rows(f.free, true) + "</table>" : "";
+    fh += '<div class="frame' + (k === s.frames.length - 1 ? " current" : "") + '" data-line="' + f.line + '" style="--fc:' + frameColor(fi) + '">' +
+      '<div class="fh"><span>#' + fi + "</span><b>" + esc(f.func) + "</b><span>行 " + f.line + ":" + f.col + "</span><span class=\"muted\">ip " + hex4(f.ip) + " base " + f.base + "</span></div>" +
+      (loc || fre ? loc + fre : '<div class="empty">ローカルなし</div>') + "</div>";
+  }
+  if (s.frameOmitted) fh += '<div class="empty">… 外側 ' + s.frameOmitted + " フレーム省略</div>";
+  $("frames").innerHTML = fh;
+
+  // クロージャとセル
+  const prevCells = new Map((p ? p.cells : []).map((x) => [x.id, x.v.s]));
+  let ch = "";
+  if (s.cells.length) {
+    ch += '<div class="sub">捕捉されているセル</div><div class="cells">';
+    for (const cl of s.cells) {
+      const nClo = cl.refs.filter((r) => r.includes(" #")).length;
+      const changed = p && prevCells.get(cl.id) !== cl.v.s;
+      ch += '<div class="cell' + (changed ? " changed" : "") + '" style="--cc:' + cellColor(cl.id) + '">' + cellChip(cl.id) + vhtml(cl.v) +
+        (nClo >= 2 ? ' <span class="badge">共有 ×' + nClo + "</span>" : "") +
+        "<ul>" + cl.refs.map((r) => "<li>" + esc(r) + "</li>").join("") + "</ul></div>";
+    }
+    ch += "</div>";
+  }
+  if (s.closures.length) {
+    ch += '<div class="sub">クロージャ</div>';
+    for (const cl of s.closures) {
+      ch += '<div class="clo"><span class="t-function">fn ' + esc(cl.func) + " #" + cl.id + "</span> " +
+        (cl.free.length ? "→ " + cl.free.map((f) => esc(f.name) + " " + cellChip(f.cell)).join(" ") : '<span class="muted">捕捉なし</span>') + "</div>";
+    }
+  }
+  $("cells").innerHTML = ch || '<div class="empty">クロージャはまだありません</div>';
+
+  // グローバル
+  const showB = $("showBuiltins").checked;
+  const prevG = new Map((p ? p.globals : []).map((g) => [g.name, g.v.s]));
+  const gl = s.globals.filter((g) => showB || !g.builtin);
+  $("globals").innerHTML = gl.length ? '<table class="kv">' + gl.map((g) =>
+    "<tr" + (p && prevG.get(g.name) !== g.v.s ? ' class="changed"' : "") + "><th>" + esc(g.name) + (g.const ? ' <span class="badge">const</span>' : "") + '</th><td class="v">' + vhtml(g.v) + "</td></tr>").join("") + "</table>"
+    : '<div class="empty">まだグローバル変数はありません</div>';
+
+  markCurrentIns();
+  paintEditor();
+  if (status !== "done") scrollEditorTo(c.line);
+}
+$("showBuiltins").addEventListener("change", renderState);
+$("frames").addEventListener("click", (e) => { const f = e.target.closest(".frame"); if (f) selectLine(+f.dataset.line, true); });
+
+// ---------- 実行の制御 ----------
+function J(s) { return JSON.parse(s); }
+function showError(err) {
+  errPos = err.line ? { line: err.line, col: err.col } : null;
+  $("errbox").innerHTML = '<div class="err mono">' + esc(err.text) + "</div>";
+  if (errPos) scrollEditorTo(errPos.line);
+}
+// ソースをコンパイルして VM を準備する。成功したら true
+function load() {
+  errPos = null; linkedLine = 0;
+  $("errbox").innerHTML = "";
+  setOut("");
+  const r = J(api.load(ta.value));
+  snap = prevSnap = null;
+  if (!r.ok) {
+    loaded = false; protos = [];
+    renderDis();
+    appendErr(r.error); showError(r.error);
+    setStatus("error", "");
+    renderState();
+    return false;
+  }
+  loaded = true; protos = r.protos;
+  renderDis();
+  snap = J(api.snapshot());
+  setStatus("ready");
+  renderState();
+  return true;
+}
+function takeSnap() { prevSnap = snap; snap = J(api.snapshot()); }
+function finish(r) {
+  appendOut(r.out);
+  if (r.status === "error") { appendErr(r.error); showError(r.error); }
+  takeSnap();
+  setStatus(r.status === "error" ? "error" : r.status === "done" ? "done" : "paused");
+  renderState();
+}
+function step(mode) {
+  if (running) return;
+  if (!loaded && !load()) return;
+  if (status === "done" || status === "error") return;
+  if (mode === "instr") { finish(J(api.step("instr", 1))); return; }
+  drive(mode);
+}
+// 予算 (CHUNK 命令) ずつ requestAnimationFrame で進める。一時停止でいつでも止まる。
+function drive(mode) {
+  running = true; pauseReq = false; sinceAuto = 0;
+  setStatus("running");
+  const tick = () => {
+    const r = J(api.step(mode, CHUNK));
+    appendOut(r.out);
+    sinceAuto += CHUNK;
+    if (r.status === "budget" && !pauseReq && sinceAuto < AUTO_PAUSE) {
+      $("stInfo").textContent = r.steps.toLocaleString() + " 命令";
+      requestAnimationFrame(tick);
+      return;
+    }
+    running = false;
+    if (r.status === "budget") {
+      r.status = "paused";
+      if (!pauseReq) appendOut("[" + AUTO_PAUSE.toLocaleString() + " 命令を実行したので一時停止しました。「続行」で再開します]\n");
+    }
+    r.out = "";
+    finish(r);
+  };
+  requestAnimationFrame(tick);
+}
+$("btnRun").onclick = () => { if (load()) drive("run"); };
+$("btnCompile").onclick = () => load();
+$("btnInstr").onclick = () => step("instr");
+$("btnLine").onclick = () => step("line");
+$("btnOut").onclick = () => step("out");
+$("btnCont").onclick = () => step("run");
+$("btnPause").onclick = () => { pauseReq = true; };
+$("btnReset").onclick = () => { if (!running) load(); };
+$("example").onchange = () => {
+  const all = MINI.concat(examples);
+  const ex = all[+$("example").value];
+  ta.value = ex.src;
+  ta.dispatchEvent(new Event("input"));
+  setOut("");
+  $("editor").scrollTop = 0;
+};
+document.addEventListener("keydown", (e) => {
+  if (e.target === ta || e.target.tagName === "SELECT") return;
+  if (e.key === "s") step("instr");
+  else if (e.key === "n") step("line");
+});
+
+// ---------- 起動 ----------
+(async () => {
+  try {
+    const go = new Go();
+    const res = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+    go.run(res.instance);
+    api = globalThis.minilang;
+    examples = J(api.examples());
+    const sel = $("example");
+    MINI.concat(examples).forEach((ex, i) => {
+      const o = document.createElement("option");
+      o.value = i; o.textContent = ex.out !== undefined ? "examples/" + ex.name + ".lang" : ex.name;
+      sel.append(o);
+    });
+    $("loading").hidden = true;
+    $("app").hidden = false;
+    sel.value = "0";
+    sel.onchange();
+  } catch (e) {
+    $("loading").innerHTML = '<span class="err">wasm の読み込みに失敗しました: ' + esc(e.message || e) + "</span>";
+  }
+})();
+</script>
+</body>
+</html>

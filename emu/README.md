@@ -41,29 +41,68 @@ printf 'ls\ncat /etc/motd\nps\nhalt\n' | ./rvemu boot --timeout 10s --stats ../o
 ```
 
 テスト: `go vet ./... && go test ./...`
-(`../os/zig-out/bin/kernel.elf` があれば zigos の起動テストも走る。`RVEMU_KERNEL=` で場所を指定可)
+(`../os/zig-out/bin/kernel.elf` があれば zigos の起動テスト・ブラウザ用 session のテストも走る。`RVEMU_KERNEL=` で場所を指定可)
+`go test ./rv -run TestUser -update` で `testdata/*.elf` を作り直す。
 
 ## ファイル構成 (アーキテクチャ)
 
+エミュレータ本体はインポート可能なパッケージ `rvemu/rv` (`rv/`) にあり、`main.go` は CLI だけ。
+
 ```
-main.go      CLI (run / boot サブコマンド, フラグ)
-machine.go   マシンの組み立て: ユーザモード (メモリ配置・スタック) / システムモード (virt) / 実行ループ
-cpu.go       CPU の状態, Step (fetch → decode → execute), 命令の意味 (execute), M/A 拡張, Zicsr, WFI
-decode.go    命令語 → Inst 構造体 (Op, rd, rs1, rs2, imm…)。ビットの切り出しはここだけ
-rvc.go       C 拡張: 16 ビット命令を対応する 32 ビット命令に展開
-encode.go    32 ビット命令のエンコーダ (RVC 展開とテスト用アセンブラで共用)
-csr.go       CSR の番号・読み書き (sstatus は mstatus の一部の「窓」、など)
-trap.go      例外・割り込みの受付 (trap), mret/sret, 委譲 (medeleg/mideleg), 割り込み優先度
-bus.go       物理アドレス → RAM / デバイスの振り分け, sifive_test (電源断) デバイス
-uart.go      UART 16550 (ポーリング用の最小実装, ホストの stdin/stdout に接続)
-clint.go     CLINT (msip / mtimecmp / mtime)
-elf.go       ELF ローダ (ヘッダ解析は debug/elf, PT_LOAD のコピーは自前)
-syscall.go   Linux システムコール (ユーザモードランナー用)
-disasm.go    逆アセンブラ (--trace 用)
-*_test.go    命令クラスごとのテスト, テスト用ミニアセンブラ + ELF ビルダ (asm_test.go)
+main.go          CLI (run / boot サブコマンド, フラグ)
+cmd/wasm/        ブラウザ版 (web/os) の wasm エントリ。session.go は普通の go test で検証できる
+rv/machine.go    Machine の組み立て: ユーザモード (メモリ配置・スタック) / システムモード (virt) / 実行ループ
+rv/api.go        外部向け API: Snapshot, ReadMem, Disasm/DisasmAround, 命令トレースのリングバッファ
+rv/cpu.go        CPU の状態, Step (fetch → decode → execute), 命令の意味 (execute), M/A 拡張, Zicsr, WFI
+rv/decode.go     命令語 → Inst 構造体 (Op, rd, rs1, rs2, imm…)。ビットの切り出しはここだけ
+rv/rvc.go        C 拡張: 16 ビット命令を対応する 32 ビット命令に展開
+rv/encode.go     32 ビット命令のエンコーダ (RVC 展開とテスト用アセンブラで共用)
+rv/csr.go        CSR の番号・読み書き (sstatus は mstatus の一部の「窓」、など)
+rv/trap.go       例外・割り込みの受付 (trap), mret/sret, 委譲, 割り込み優先度, TrapEvent
+rv/bus.go        物理アドレス → RAM / デバイスの振り分け, sifive_test (電源断) デバイス
+rv/uart.go       UART 16550 (ポーリング用の最小実装。io.Reader から、または Push で入力)
+rv/clint.go      CLINT (msip / mtimecmp / mtime)
+rv/elf.go        ELF ローダ (ヘッダ解析は debug/elf, PT_LOAD のコピーは自前), シンボル表
+rv/syscall.go    Linux システムコール (ユーザモードランナー用)
+rv/disasm.go     逆アセンブラ
+rv/*_test.go     命令クラスごとのテスト, テスト用ミニアセンブラ + ELF ビルダ (asm_test.go)
 ```
 
-1 命令の流れ (`CPU.Step`):
+## Go から使う (パッケージ `rvemu/rv`)
+
+他のモジュールからは `go.mod` に `require rvemu v0.0.0` と `replace rvemu => ../emu` を書いて
+`import "rvemu/rv"` する。
+
+```go
+// ユーザモード: Linux 静的 ELF (例: ブラウザ内アセンブラの出力) を実行する
+m, err := rv.NewUserMachine(elfBytes, []string{"prog", "arg1"}, &stdout, strings.NewReader("input"))
+exited, code, err := m.Run(10_000_000)   // 最大 1000 万ステップ。exit すれば exited=true
+
+// システムモード: QEMU virt 相当でカーネルを起動する
+m, err := rv.NewVirtMachine(kernelBytes, &uartOut, nil, &rv.VirtOptions{RAMSize: 4 << 20})
+m.SendInput([]byte("ls\r"))               // UART の受信データとして注入
+```
+
+| API | 説明 |
+|---|---|
+| `NewUserMachine(elf []byte, argv []string, stdout io.Writer, stdin io.Reader)` | argv は argv[0] 込み (空なら `a.out`)。stderr も stdout へ (`m.Proc.Stderr` で変更可)。stdin が nil なら EOF |
+| `NewVirtMachine(kernel []byte, stdout io.Writer, stdin io.Reader, *VirtOptions)` | ELF または 0x80000000 に置く生バイナリ。stdin が nil なら入力は `SendInput` で |
+| `m.Step()` | 1 ステップ = 1 命令、またはトラップの受付 1 回 |
+| `m.Run(maxSteps) (exited bool, code int, err error)` | 0 なら止まるまで。停止・アイドル (下記)・`RunUntilTrap` 中のトラップで途中で戻る |
+| `m.RunUntilTrap(maxSteps) (trapped bool)` | 次のトラップ (例外・割り込み・mret/sret・ユーザモードのシステムコール) まで |
+| `m.Snapshot() Snapshot` | `X[32]`, `PC`, `Priv`, `Instret`, `CSR` (名前→値: mstatus mtvec mepc mcause mtval mie mip mscratch medeleg mideleg satp sepc scause stvec mhartid misa), `Mtime`, `Mtimecmp`, `Halted`, `ExitCode`, `Err` |
+| `m.ReadMem(addr, n) []byte` / `m.WriteMem(addr, data)` | 物理アドレス。ReadMem はデバイスも読めるが副作用なし (UART の受信データを消費しない) |
+| `m.Disasm(addr, count)` / `m.DisasmAround(pc, before, after)` | `[]DisasmLine{Addr, Size, Raw, Text, Symbol, OK}`。Around は 2/4 バイト命令混在でも pc に着地する開始位置を探す |
+| `m.EnableTrace(n)` / `m.Trace() []TraceEntry` | 直近 n 命令のリングバッファ (`Seq, PC, Priv, Raw, Size, Text`)。文字列化は取り出すときだけ |
+| `m.Traps() []TrapEvent` / `m.TrapCount()` / `m.OnTrap` | 直近 256 件のトラップ記録とフック。`TrapEvent{Seq, Kind, Cause, From, To, PC, Target, Tval, A7}`。Kind は `exception` `interrupt` `mret` `sret` `syscall` |
+| `m.SetRealtimeIdle(true)` / `m.SetIdleBudget(ticks)` / `m.Idle()` | WFI の早送りを「与えた tick 数」までに制限する (ブラウザで実時間に合わせる)。使い切ると Run が戻り `Idle()` が true |
+| `m.Symbols` / `m.Symbolize(addr)` | ELF のシンボル表。`"proc.schedule+0x1c"` の形にする |
+| `rv.CauseName(cause)` / `rv.PrivName(p)` / `rv.RegNames` | mcause の名前, `"U"/"S"/"M"`, ABI レジスタ名 |
+| `m.CPU`, `m.Bus`, `m.UART`, `m.CLINT`, `m.Proc` | 中身に直接触ることもできる (`m.CPU.Trace = w` で全命令トレースなど) |
+
+ブラウザ版は `../web/os/` (`./build.sh` で wasm と kernel.elf を用意し、`python3 -m http.server -d ../web` で開く)。
+
+1 命令の流れ (`CPU.Step`, `rv/cpu.go`):
 
 ```
  [CLINT tick] → mip.MTIP 更新 → 割り込み受付可能? ──yes──→ trap() して終わり

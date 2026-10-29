@@ -27,7 +27,22 @@ $B --loss 0.1 -v tcp-bulk 10.0.0.1 7 100000  # 10% のフレームを捨てて�
 $B http-get 10.0.0.1 80 /hello
 ```
 
+## ブラウザ版 (web/net)
+
+`web/net/build.sh` で `cmd/wasm` を wasm にビルドし、`python3 -m http.server -d web 8000` → `http://localhost:8000/net/`。
+1 つの wasm の中で 2 つのスタック (A 10.0.0.1 サーバ / B 10.0.0.2 クライアント) を `SimWire` でつなぎ、
+シーケンス図・パケットインスペクタ (層ごとの分解 + 色分け 16 進ダンプ)・TCP 状態機械・ARP キャッシュ/コネクション表・pcap ダウンロードを表示する。
+
+- `mininet/simwire.go` — 遅延・損失・「次を落とす」・一時停止/1 フレームずつ配送・タップ付きの仮想ケーブル
+- `mininet/decode.go` — フレームを層とフィールド (バイト範囲付き) に分解 (`Decode`, `Summarize`)
+- `mininet/snapshot.go` — `Stack.Snapshot()` (ARP キャッシュ, TCP の snd.una/nxt, rcv.nxt, ウィンドウ, 再送キュー, RTO …)、`OnTCPState` フック
+- `sim/` — 2 ノードの実験室 (イベントログ、相対 seq のラベル付け、再送・重複 ACK の判定、pcap 生成)。JS 非依存で `go test` できる
+- `cmd/wasm/` — `window.mininet` に `poll / frame / run / setLoss / setLatency / dropNext / setPaused / step / dropHead / pcap / reset` を公開
+
 ## ファイル構成と層
+
+スタック本体はパッケージ `mininet/mininet` (ディレクトリ `mininet/`)、CLI は `main.go`。
+
 
 ```
   アプリ      apps.go  (TCP echo / UDP echo / HTTP/1.0 サーバとクライアント), main.go (CLI)

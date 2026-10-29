@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Low-level Playground</title>
+<link rel="stylesheet" href="shared/style.css">
+<style>
+  .hero { padding: 20px 16px 4px; max-width: 1100px; margin: 0 auto; }
+  .hero h1 { font-size: 22px; margin: 0 0 6px; }
+  .hero p { margin: 0; color: var(--muted); }
+  .cards { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  a.card { display: block; text-decoration: none; color: inherit; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; transition: border-color .15s; }
+  a.card:hover { border-color: var(--accent); }
+  a.card h2 { font-size: 16px; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+  a.card h2 code { font-size: 12px; color: var(--muted); font-weight: normal; }
+  a.card p { margin: 0 0 8px; }
+  a.card ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .flow { max-width: 1100px; margin: 0 auto; padding: 0 16px 24px; }
+  .flow pre { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>Low-level Playground</h1>
+  <p>自作の CPU・OS・アセンブラ・コンパイラ・言語・DB・TCP/IP・JS ランタイムを、ブラウザ上で動かして中身を覗く。すべて Go（OS は Zig）→ WebAssembly。</p>
+</div>
+<div class="cards">
+  <a class="card" href="os/">
+    <h2>OS on 自作 CPU <code>emu + os</code></h2>
+    <p>Zig 製ミニ OS を RISC-V エミュレータで起動。シェルを触りながら CPU を一時停止して覗く。</p>
+    <ul><li>レジスタ・CSR・特権モード (U/M)</li><li>逆アセンブル・1 命令ステップ</li><li>トラップ／システムコールのログ・メモリダンプ</li></ul>
+  </a>
+  <a class="card" href="pipeline/">
+    <h2>コンパイル → 実行 <code>cc / compiler → asm → emu</code></h2>
+    <p>C や minilang のソースが、アセンブリ → 機械語のビット → ELF → CPU 実行になるまでを一画面で。</p>
+    <ul><li>ソース行 ↔ アセンブリ ↔ 機械語の対応</li><li>命令形式 (R/I/S/B/U/J) のビット分解</li><li>-O0 / -O2、静的型 vs 動的型の命令数比較</li></ul>
+  </a>
+  <a class="card" href="lang/">
+    <h2>バイトコード VM <code>lang</code></h2>
+    <p>JS 風言語のバイトコードを 1 命令ずつ実行。スタック・フレーム・クロージャの箱が動く様子を見る。</p>
+    <ul><li>ソース ↔ バイトコードの対応</li><li>値スタック・コールスタック・グローバル</li><li>クロージャが共有する箱</li></ul>
+  </a>
+  <a class="card" href="db/">
+    <h2>B+tree RDB <code>db</code></h2>
+    <p>SQL を打つたびに B+tree が育ち、ページが分割される。4KB ページを 16 進で覗く。</p>
+    <ul><li>B+tree の図・分割のハイライト</li><li>ページのバイト配置</li><li>インデックス検索 vs 全件走査</li></ul>
+  </a>
+  <a class="card" href="net/">
+    <h2>TCP/IP スタック <code>net</code></h2>
+    <p>ページ内の 2 ノードが通信。パケットをシーケンス図で追い、ロス率を上げて再送を観察。</p>
+    <ul><li>3-way handshake・FIN・TIME_WAIT</li><li>パケットの層ごとの分解・hex</li><li>pcap ダウンロード</li></ul>
+  </a>
+  <a class="card" href="runtime/">
+    <h2>JS ランタイム <code>runtime</code></h2>
+    <p>自前イベントループの中身を可視化。microtask と timer の順番、パーミッションの判定を見る。</p>
+    <ul><li>コールスタック・microtask・timer ヒープ</li><li>実行順クイズ</li><li>パーミッションログ (../ の正規化)</li></ul>
+  </a>
+</div>
+<div class="flow">
+<pre>          ┌──────────┐  .s
+ .lang ──▶│ compiler │──────┐
+          └──────────┘      ▼
+          ┌──────────┐  .s ┌──────┐  ELF  ┌──────┐
+ .c ─────▶│    cc    │────▶│ asm  │──────▶│ emu  │◀── os の kernel.elf
+          └──────────┘     └──────┘       └──────┘</pre>
+</div>
+</body>
+</html>

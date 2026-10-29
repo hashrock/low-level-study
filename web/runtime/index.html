@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minirt イベントループ</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  header.top .spacer { flex: 1; }
+  header.top .clock { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .layout { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+  .cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); margin-top: 12px; }
+  .wide { grid-column: 1 / -1; }
+  .row2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); margin-top: 12px; }
+  #src { min-height: 300px; }
+  label.inline { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .perm-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; align-items: center; }
+  .perm-grid label { display: inline-flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  .perm-grid input[type=text] { width: 100%; min-width: 0; font-family: var(--mono); font-size: 12.5px; }
+  .perm-grid input[type=text]:disabled { opacity: .45; }
+  input[type=number] { width: 90px; }
+  .cli { font-family: var(--mono); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  table.routes { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px; margin-top: 6px; }
+  table.routes td, table.routes th { border-bottom: 1px solid var(--border); padding: 2px 4px; text-align: left; }
+  table.routes th { color: var(--muted); font-weight: normal; }
+  table.routes td.url { word-break: break-all; }
+  table.routes input { width: 64px; padding: 1px 4px; }
+
+  .controls { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 8px 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+  .controls .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .controls .dirty { color: var(--warn); font-size: 12px; }
+  .lastev { font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 1.5em; word-break: break-all; }
+
+  .col { min-height: 170px; max-height: 320px; }
+  .col h2 .badge { margin-left: 4px; text-transform: none; letter-spacing: 0; }
+  .item { font-family: var(--mono); font-size: 12px; border: 1px solid var(--border); border-left-width: 4px; border-radius: var(--radius); padding: 3px 6px; margin-bottom: 4px; background: var(--panel-2); word-break: break-word; }
+  .item .meta { color: var(--muted); font-size: 11px; }
+  .item.k-main { border-left-color: var(--c1); }
+  .item.k-timer { border-left-color: var(--c3); }
+  .item.k-interval { border-left-color: var(--c6); }
+  .item.k-op { border-left-color: var(--c2); }
+  .item.k-micro { border-left-color: var(--c4); }
+  .item.k-loop { border-left-color: var(--border); color: var(--muted); }
+  .item.next { box-shadow: 0 0 0 1px var(--accent); }
+  .group { color: var(--muted); font-size: 11px; margin: 6px 0 3px; }
+  .empty { color: var(--muted); font-size: 12px; font-style: italic; }
+  .stack { display: flex; flex-direction: column-reverse; }
+
+  .timeline { max-height: 520px; overflow: auto; }
+  .task { border: 1px solid var(--border); border-left-width: 5px; border-radius: var(--radius); padding: 4px 8px; margin-bottom: 6px; background: var(--panel); }
+  .task.k-main { border-left-color: var(--c1); }
+  .task.k-timer { border-left-color: var(--c3); }
+  .task.k-interval { border-left-color: var(--c6); }
+  .task.k-op { border-left-color: var(--c2); }
+  .task .th { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; }
+  .task .th .t { color: var(--muted); min-width: 64px; }
+  .task .th .lbl { word-break: break-word; }
+  .task .log, .micro .log { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; padding-left: 4px; }
+  .task .log.err, .micro .log.err { color: var(--err); }
+  .micro { margin: 3px 0 3px 14px; border-left: 3px solid var(--c4); padding: 1px 6px; background: var(--panel-2); border-radius: 0 var(--radius) var(--radius) 0; }
+  .micro .mh { font-family: var(--mono); font-size: 11.5px; color: var(--muted); word-break: break-word; }
+  .drain { margin: 2px 0 0 14px; font-size: 11px; color: var(--muted); }
+  .task .terr { color: var(--err); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+
+  #console { min-height: 160px; max-height: 300px; }
+  #console .e { color: var(--err); }
+  #console .sys { color: var(--muted); }
+  .perms { max-height: 300px; overflow: auto; }
+  .perm { font-family: var(--mono); font-size: 12px; padding: 3px 6px; border-left: 4px solid var(--border); margin-bottom: 3px; background: var(--panel-2); border-radius: 0 var(--radius) var(--radius) 0; word-break: break-all; }
+  .perm.allow { border-left-color: var(--ok); }
+  .perm.deny { border-left-color: var(--err); }
+  .perm .v { font-weight: bold; }
+  .perm.allow .v { color: var(--ok); }
+  .perm.deny .v { color: var(--err); }
+  .perm .norm { color: var(--muted); }
+  .perm .tag { font-size: 10.5px; }
+
+  .files { font-family: var(--mono); font-size: 12px; max-height: 300px; overflow: auto; }
+  .files .f { display: flex; gap: 8px; padding: 1px 4px; cursor: pointer; border-radius: 4px; }
+  .files .f:hover { background: var(--panel-2); }
+  .files .f .sz { color: var(--muted); margin-left: auto; white-space: nowrap; }
+  .files .f.dir { color: var(--muted); cursor: default; }
+  .files .f.link { color: var(--c4); }
+  #fileView { margin-top: 6px; max-height: 160px; }
+
+  .quiz { border: 2px solid var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .chips button { font-family: var(--mono); font-size: 12px; }
+  .answer { counter-reset: q; padding: 0; list-style: none; margin: 6px 0; }
+  .answer li { font-family: var(--mono); font-size: 12px; padding: 2px 6px; border-radius: 4px; margin-bottom: 2px; background: var(--panel-2); word-break: break-word; }
+  .answer li.right { border-left: 4px solid var(--ok); }
+  .answer li.wrong { border-left: 4px solid var(--err); }
+  .answer li .exp { color: var(--muted); }
+
+  .notes { line-height: 1.7; }
+  .notes h3 { font-size: 14px; margin: 14px 0 4px; }
+  .notes h3:first-child { margin-top: 0; }
+  .notes p { margin: 4px 0; }
+  .notes ul { margin: 4px 0; padding-left: 20px; }
+  .notes code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+  .notes pre { background: var(--panel-2); padding: 8px; border-radius: var(--radius); overflow: auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; }
+  .sw.k-main { background: var(--c1); } .sw.k-timer { background: var(--c3); } .sw.k-interval { background: var(--c6); }
+  .sw.k-op { background: var(--c2); } .sw.k-micro { background: var(--c4); }
+  #errbox { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>minirt イベントループ</h1>
+  <span class="badge">goja + 自作ループ → wasm</span>
+  <span class="spacer"></span>
+  <span class="clock" id="clock">仮想時刻 0ms</span>
+</header>
+<main>
+  <div id="loading" class="loading">wasm（goja 入りで約 20MB）を Web Worker に読み込み中…</div>
+  <div id="errbox" class="err" hidden></div>
+  <div id="app" hidden>
+    <div class="layout">
+      <section class="panel">
+        <h2>スクリプト</h2>
+        <div class="toolbar">
+          <label class="inline">例 <select id="preset"></select></label>
+          <button id="quizBtn" title="出力の順番を予想してから答え合わせ">順番を予想する</button>
+        </div>
+        <textarea id="src" spellcheck="false" aria-label="スクリプト"></textarea>
+        <p class="hint">ファイルは仮想 FS 上の <code>/app/examples/&lt;名前&gt;</code> として実行（カレントは <code>/app</code>）。リポジトリと同じ相対パスなので例は無改造で動く。</p>
+      </section>
+      <section class="panel">
+        <h2>パーミッション（何も付けなければ全部拒否）</h2>
+        <div class="perm-grid">
+          <label><input type="checkbox" id="pr"> --allow-read=</label><input type="text" id="prv" placeholder="空なら全部">
+          <label><input type="checkbox" id="pw"> --allow-write=</label><input type="text" id="pwv" placeholder="空なら全部">
+          <label><input type="checkbox" id="pn"> --allow-net=</label><input type="text" id="pnv" placeholder="空なら全部">
+          <label><input type="checkbox" id="pe"> --allow-env=</label><input type="text" id="pev" placeholder="空なら全部">
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <label class="inline">--timeout <input type="number" id="timeout" min="0" step="100" value="2000"> ms</label>
+          <label class="inline">FS 遅延 <input type="number" id="fslat" min="0" step="1" value="2"> ms</label>
+        </div>
+        <div class="cli" id="cli"></div>
+        <p class="hint">timeout は仮想時刻の上限。<code>for(;;){}</code> のように 1 タスクが戻ってこない場合は、同じ値を実時間として Worker ごと強制終了する。</p>
+        <details>
+          <summary>偽ネットワーク（fetch の応答と遅延）</summary>
+          <table class="routes"><thead><tr><th>URL</th><th>状態</th><th>遅延 ms</th></tr></thead><tbody id="routes"></tbody></table>
+          <p class="hint">それ以外の URL は「no such host」で失敗。<code>/redirect</code> は内部アドレスへ 302 する（リダイレクト先も再検査される）。</p>
+        </details>
+      </section>
+    </div>
+
+    <section class="panel quiz wide" id="quiz" hidden style="margin-top:12px">
+      <h2>予想クイズ: 出力される順にクリック</h2>
+      <div class="chips" id="chips"></div>
+      <ol class="answer" id="answer"></ol>
+      <div class="toolbar">
+        <button id="quizUndo">1 つ戻す</button>
+        <button id="quizCheck" class="primary">答え合わせ</button>
+        <button id="quizClose">やめる</button>
+        <span id="quizScore" class="muted"></span>
+      </div>
+    </section>
+
+    <div class="controls toolbar" style="margin-top:12px">
+      <button id="runBtn" class="primary">▶ 実行</button>
+      <button id="stepBtn" title="マクロタスクを 1 つ実行し、その後のマイクロタスクを全部流す">1 タスク</button>
+      <button id="evBtn" title="トレースのイベントを 1 つずつ再生（キューの出入りを細かく見る）">1 イベント</button>
+      <button id="resetBtn">リセット</button>
+      <span class="status" id="status">未実行</span>
+      <span class="dirty" id="dirty" hidden>（変更あり：次の操作で読み込み直し）</span>
+    </div>
+    <div class="lastev" id="lastev"></div>
+
+    <div class="cols">
+      <section class="panel col"><h2>コールスタック <span class="badge" id="nStack">0</span></h2><div id="stack" class="stack"></div></section>
+      <section class="panel col"><h2>マイクロタスク <span class="badge" id="nMicro">0</span></h2><div id="micro"></div></section>
+      <section class="panel col"><h2>タイマーヒープ <span class="badge" id="nTimers">0</span></h2><div id="timers"></div></section>
+      <section class="panel col"><h2>実行中の非同期 op <span class="badge" id="nOps">0</span></h2><div id="ops"></div></section>
+    </div>
+
+    <div class="row2">
+      <section class="panel">
+        <h2>タイムライン（タスク 1 個 = 1 ブロック、中にマイクロタスク）</h2>
+        <div class="legend"><span><i class="sw k-main"></i>main</span><span><i class="sw k-timer"></i>setTimeout</span><span><i class="sw k-interval"></i>setInterval</span><span><i class="sw k-op"></i>op 完了</span><span><i class="sw k-micro"></i>マイクロタスク</span></div>
+        <div class="timeline" id="timeline" style="margin-top:6px"></div>
+      </section>
+      <div style="display:grid; gap:12px; min-width:0">
+        <section class="panel"><h2>コンソール</h2><div class="terminal" id="console"></div></section>
+        <section class="panel"><h2>パーミッションログ <span class="badge" id="nPerm">0</span></h2><div class="perms" id="perms"><div class="empty">まだ検査なし</div></div></section>
+      </div>
+    </div>
+
+    <div class="row2">
+      <section class="panel">
+        <h2>仮想ファイルシステム</h2>
+        <div class="files" id="files"></div>
+        <pre class="terminal" id="fileView" hidden></pre>
+      </section>
+      <section class="panel notes">
+        <h2>解説</h2>
+        <h3>なぜ <code>Promise.then</code> は <code>setTimeout(0)</code> より先に走るのか</h3>
+        <p>イベントループの 1 周は「<b>マクロタスクを 1 個</b>実行 → <b>マイクロタスクキューが空になるまで全部</b>実行」の繰り返し。
+          メインスクリプトそのものが最初のマクロタスクで、<code>setTimeout(f, 0)</code> は f を<b>タイマーヒープ</b>に入れるだけ。f は「次以降のマクロタスク」として、ループが次に何を実行するか選ぶときに初めて取り出される。</p>
+        <p>一方 <code>Promise.resolve().then(g)</code>・<code>await</code> の続き・<code>queueMicrotask(g)</code> は<b>マイクロタスク</b>で、今のタスクが終わった直後、ループに制御が戻る<b>前</b>に流される。だから遅延 0 でもタイマーは必ず後。
+          タイマーのコールバックの中で作った Promise も、次のタイマーより先に走る（<code>timers.js</code> の 7 番）。</p>
+        <p>minirt では、goja がジョブキューを内部に持ち、JS から Go へ最外周で戻るとき（<code>Runtime.leave()</code>）に空になるまで流す。ループが実行するタスク（メインスクリプト・タイマー・op 完了での <code>resolve()</code>）は全部この「最外周の呼び出し」なので、何もしなくても HTML/Node と同じ順序になる。
+          「1 タスク」ボタンでこの単位で進み、「1 イベント」でその中身（キューへの出入り）を 1 つずつ見られる。</p>
+        <h3>この可視化の「近似」について（正直に）</h3>
+        <ul>
+          <li>タスク・タイマー・非同期 op はランタイム自身のものなので<b>正確</b>。</li>
+          <li>マイクロタスクは goja 内部のキューにあり「キューに入った瞬間」のフックが無い。代わりに goja の <code>AsyncContextTracker</code>（反応の<b>登録</b>時と、ハンドラの実行直前・直後に呼ばれる）と、<code>Promise.prototype.then</code> の差し替えで観測している。</li>
+          <li><code>queueMicrotask</code> と「解決済み Promise への <code>.then</code>」は登録＝キュー投入なので正確。未解決の Promise への <code>.then</code> は「待機中」と表示し、Promise が解決したことは<b>次に制御が戻った時点</b>（次のジョブの直前など）で気付いて「キュー済み」に移す。順番は正しいが瞬間は少し遅れる。</li>
+          <li><code>await</code> は goja が内部の then を直接呼ぶので、待っている Promise が見えない。「await（状態不明）」として表示し、実際に走った時点で確定する。<code>await null</code> のように実際はすぐキューに入っているものも含む。</li>
+          <li>ユーザーのハンドラを呼ばない内部ジョブ（thenable の解決など）は見えない。<code>.catch(f)</code> の成功側のようにハンドラが無い反応は、タスク終了時に「破棄」として消す。</li>
+          <li>行番号は <code>.then</code> / <code>queueMicrotask</code> の呼び出し位置。<code>await</code> は goja が関数の先頭位置しか返さないため関数名だけ。</li>
+        </ul>
+        <h3>パーミッションとパスの正規化</h3>
+        <p>許可ディレクトリは起動時に正規化し、要求パスはカーネルと同じ順序（シンボリックリンクを先に辿り、<code>..</code> は辿った<b>後</b>のディレクトリに適用）で解決してから「許可ディレクトリと等しいか <code>dir + "/"</code> で始まるか」を判定する。
+          <code>sandbox_escape.js</code> を実行すると、<code>examples/data/../../go.mod</code> が <code>/app/go.mod</code>、<code>examples/data/link_to_etc/passwd</code> が <code>/etc/passwd</code> に正規化されて拒否される様子がログに出る。
+          正規化後のパスはホスト側のログにだけ表示し、スクリプトに返すエラーメッセージには入れない（リンク先を教えないため）。</p>
+        <h3>脅威モデルと限界（README §5 より）</h3>
+        <ul>
+          <li><b>メモリ枯渇</b>は防げない：goja は Go のヒープに確保し、上限で止める仕組みが無い。本当に必要ならプロセス分離（rlimit / cgroups）。</li>
+          <li><b>CPU</b> は壁時計の上限だけ。命令数の制限は無い。組み込み関数（巨大な <code>repeat</code>・<code>JSON.parse</code>・正規表現の破滅的バックトラッキング）の中にいる間は <code>vm.Interrupt</code> が効かず、タイムアウトが遅れる。</li>
+          <li><b>TOCTOU</b>：検査と open の間に途中のディレクトリを差し替えられる競合は防げない（<code>O_NOFOLLOW</code> は最終要素だけ）。<b>ハードリンク</b>もパス検査では防げない。</li>
+          <li>ネットワークは<b>ホスト名</b>ベース：DNS rebinding で内部 IP に向けられても通る。リダイレクトの各ホップは再検査している。</li>
+          <li>同一プロセスで動くので、エンジンやランタイムのバグはそのままホストの権限で動く。op 数・出力量・タイマー数にも上限が無い。<code>Date.now()</code> の精度も落としていない。</li>
+        </ul>
+        <h3>ブラウザ版での違い</h3>
+        <ul>
+          <li>ブラウザ自体がサンドボックスなので、ここでの「隔離」は教材としての意味しかない。ファイルはメモリ上の仮想 FS、<code>fetch</code> は決まった URL だけ答える偽ネットワーク、環境変数も偽物。</li>
+          <li>時計は<b>仮想時刻</b>：やることが無くなると次の期限まで一気に進むので、何度実行しても同じ順序になる。<code>Date.now()</code> も仮想時刻を返す。op の処理は開始時にその場で行い、結果を「開始時刻 + 遅延」に届ける（CLI では goroutine で実行）。</li>
+          <li>js/wasm はシングルスレッドで goroutine のプリエンプションが無いため、<code>for(;;){}</code> の最中に <code>vm.Interrupt</code> を呼ぶ goroutine が動けない。そこでランタイム全体を Web Worker で動かし、応答が無ければ Worker ごと終了する（CLI の終了コード 124 に相当）。</li>
+        </ul>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtT = (t) => (t || 0).toFixed(Number.isInteger(t || 0) ? 0 : 1) + "ms";
+
+const PRESET_PERMS = {
+  "timers.js": {},
+  "event_loop_quiz.js": {},
+  "async_fs.js": { read: "examples/data", write: "examples/data" },
+  "sandbox_escape.js": { read: "examples/data", timeout: 2000 },
+  "fetch.js": { net: "example.com" },
+  "hello.js": {},
+};
+const PRESET_ORDER = ["timers.js", "event_loop_quiz.js", "async_fs.js", "sandbox_escape.js", "fetch.js", "hello.js"];
+
+// ---------- Worker running the Go wasm ----------
+const WORKER_SRC = `
+self.onmessage = async (ev) => {
+  const m = ev.data;
+  try {
+    if (m.type === "init") {
+      importScripts(m.wasmExec);
+      const go = new Go();
+      let inst;
+      try {
+        inst = (await WebAssembly.instantiateStreaming(fetch(m.wasm), go.importObject)).instance;
+      } catch (e) {
+        const buf = await (await fetch(m.wasm)).arrayBuffer();
+        inst = (await WebAssembly.instantiate(buf, go.importObject)).instance;
+      }
+      go.run(inst);
+      postMessage({ type: "ready", examples: JSON.parse(minirt.examples()), defaults: JSON.parse(minirt.defaults()) });
+    } else if (m.type === "load") {
+      const r = JSON.parse(minirt.load(JSON.stringify(m.config), (s) => postMessage({ type: "ev", s })));
+      postMessage({ type: "loaded", id: m.id, r, files: JSON.parse(minirt.files()) });
+    } else if (m.type === "step") {
+      const r = JSON.parse(minirt.step());
+      postMessage({ type: "result", id: m.id, r, files: JSON.parse(minirt.files()) });
+    } else if (m.type === "run") {
+      const r = JSON.parse(minirt.run(m.max));
+      postMessage({ type: "result", id: m.id, r, files: JSON.parse(minirt.files()) });
+    }
+  } catch (e) {
+    postMessage({ type: "fatal", id: m.id, error: String(e && e.stack || e) });
+  }
+};`;
+
+let worker = null, ready = false, reqId = 0;
+const waiting = new Map(); // id -> {resolve, reject, timer}
+let examples = {}, defaults = null;
+
+function startWorker() {
+  ready = false;
+  const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" }));
+  worker = new Worker(url);
+  worker.onmessage = onWorkerMessage;
+  worker.onerror = (e) => showError("Worker エラー: " + (e.message || e));
+  worker.postMessage({ type: "init", wasmExec: new URL("../shared/wasm_exec.js", location.href).href, wasm: new URL("main.wasm", location.href).href });
+  return new Promise((resolve) => { worker._onReady = resolve; });
+}
+
+function onWorkerMessage(ev) {
+  const m = ev.data;
+  if (m.type === "ev") { receiveEvent(JSON.parse(m.s)); return; }
+  if (m.type === "fatal" && !m.id) { $("loading").hidden = false; $("loading").innerHTML = '<span class="err">wasm の読み込みに失敗しました: ' + esc(m.error) + "</span>"; return; }
+  if (m.type === "ready") { ready = true; worker._onReady(m); return; }
+  const w = waiting.get(m.id);
+  if (!w) return;
+  waiting.delete(m.id);
+  clearTimeout(w.timer);
+  if (m.type === "fatal") w.reject(new Error(m.error)); else w.resolve(m);
+}
+
+// call sends a request; if no reply comes within wallMs, the Worker is
+// terminated (the script is spinning in a single task) and restarted.
+function call(msg, wallMs) {
+  const id = ++reqId;
+  msg.id = id;
+  return new Promise((resolve, reject) => {
+    const w = { resolve, reject, timer: 0 };
+    if (wallMs > 0) {
+      w.timer = setTimeout(() => {
+        waiting.delete(id);
+        worker.terminate();
+        const e = new Error("wall-timeout");
+        e.wall = true;
+        reject(e);
+      }, wallMs);
+    }
+    waiting.set(id, w);
+    worker.postMessage(msg);
+  });
+}
+
+// ---------- trace → reconstructed state ----------
+let events = [], cursor = 0, follow = true;
+let S = null;
+let session = { loaded: false, done: false, exit: null, snapshot: null, files: [], flags: "" };
+let busy = false, dirty = false, quiz = null;
+
+function freshState() {
+  return { now: 0, tasks: [], cur: null, curMicro: null, micro: new Map(), timers: new Map(), ops: new Map(),
+    console: [], perms: [], exit: null, truncated: false, fresh: new Set(), last: null };
+}
+
+function receiveEvent(e) {
+  events.push(e);
+  if (follow) scheduleRender();
+}
+
+function apply(e) {
+  const s = S;
+  if (e.t !== undefined) s.now = e.t;
+  s.last = e;
+  const key = (k) => s.fresh.add(k);
+  switch (e.type) {
+    case "task.start":
+      s.cur = { n: e.task, kind: e.kind, id: e.id || 0, label: e.label, t: e.t || 0, logs: [], micro: [], bodyEnded: false, done: false };
+      s.tasks.push(s.cur); key("task" + e.task); key("stack"); break;
+    case "task.body.end":
+      if (s.cur) s.cur.bodyEnded = true; key("stack"); break;
+    case "task.end":
+      if (s.cur) { s.cur.done = true; s.cur.err = e.err; }
+      s.cur = null; s.curMicro = null; key("stack"); break;
+    case "micro.register":
+      s.micro.set(e.id, { id: e.id, kind: e.kind, label: e.label, line: e.line, state: e.state, task: e.task, qseq: e.state === "queued" ? e.seq : Infinity, seq: e.seq });
+      key("m" + e.id); break;
+    case "micro.queued": {
+      const m = s.micro.get(e.id); if (m) { m.state = "queued"; m.qseq = e.seq; key("m" + e.id); } break; }
+    case "micro.run": {
+      const m = s.micro.get(e.id) || { id: e.id, label: "?" };
+      m.state = "running";
+      const rec = { id: e.id, label: m.label, kind: m.kind, logs: [] };
+      if (s.cur) s.cur.micro.push(rec);
+      s.curMicro = rec; key("stack"); key("mr" + e.id); break; }
+    case "micro.done":
+      s.micro.delete(e.id); s.curMicro = null; key("stack"); break;
+    case "micro.drop":
+      s.micro.delete(e.id); break;
+    case "timer.set":
+      s.timers.set(e.id, { id: e.id, kind: e.kind, label: e.label, delay: e.delay || 0, due: e.due || 0, order: e.order || 0 });
+      key("t" + e.id); break;
+    case "timer.fire": {
+      const t = s.timers.get(e.id); if (t && t.kind !== "interval") s.timers.delete(e.id); break; }
+    case "timer.clear":
+      s.timers.delete(e.id); break;
+    case "op.start":
+      s.ops.set(e.id, { id: e.id, kind: e.kind, target: e.target, due: e.due || 0, started: e.t || 0 }); key("o" + e.id); break;
+    case "op.done":
+      s.ops.delete(e.id); break;
+    case "perm":
+      s.perms.push(e); key("p" + s.perms.length); break;
+    case "console": {
+      const line = { text: e.text, err: e.stream === "err" };
+      s.console.push(line);
+      const tgt = s.curMicro || s.cur;
+      if (tgt) tgt.logs.push(line);
+      break; }
+    case "exit":
+      s.exit = e; break;
+    case "truncated":
+      s.truncated = true; break;
+  }
+}
+
+function describe(e) {
+  if (!e) return "";
+  const id = e.id ? " #" + e.id : "";
+  switch (e.type) {
+    case "task.start": return `タスク開始: ${e.kind}${id} ${e.label || ""}`;
+    case "task.body.end": return "タスク本体が戻った → マイクロタスクを空になるまで実行";
+    case "task.end": return "タスク終了（マイクロタスクも空）" + (e.err ? " — " + e.err : "");
+    case "micro.register": return `マイクロタスク登録${id}: ${e.label} [${{ queued: "キュー済み", waiting: "Promise 待ち", unknown: "状態不明" }[e.state] || e.state}]`;
+    case "micro.queued": return `マイクロタスク${id}: Promise が解決 → キュー済み`;
+    case "micro.run": return `マイクロタスク実行${id}`;
+    case "micro.done": return `マイクロタスク完了${id}`;
+    case "micro.drop": return `マイクロタスク破棄${id}（ハンドラ無し）`;
+    case "timer.set": return `タイマー登録${id}: ${e.label} 期限 ${fmtT(e.due)}`;
+    case "timer.fire": return `タイマー発火${id}`;
+    case "timer.clear": return `タイマー解除${id}`;
+    case "op.start": return `非同期 op 開始${id}: ${e.kind} ${e.target}`;
+    case "op.done": return `非同期 op 完了${id}` + (e.err ? " (エラー)" : "");
+    case "perm": return `権限検査 ${e.kind} ${e.target} → ${e.allowed ? "許可" : "拒否"}`;
+    case "console": return "console: " + e.text;
+    case "clock": return "仮想時刻を " + fmtT(e.t) + " へ進めた";
+    case "exit": return "終了" + (e.err ? ": " + e.err : "");
+  }
+  return e.type;
+}
+
+// ---------- rendering ----------
+let rafPending = false;
+function scheduleRender() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; catchUp(); render(); });
+}
+function catchUp() {
+  if (follow) { S.fresh = new Set(); while (cursor < events.length) apply(events[cursor++]); }
+}
+
+const isHidden = () => quiz && !quiz.revealed;
+
+function render() {
+  const s = S;
+  $("clock").textContent = "仮想時刻 " + fmtT(s.now);
+  $("lastev").textContent = cursor > 0 && !isHidden() ? `[${cursor}/${events.length}] ` + describe(s.last) : "";
+  const fresh = (k) => (s.fresh.has(k) ? " changed" : "");
+  // call stack
+  let st = '<div class="item k-loop">イベントループ（Go の Loop.Step）</div>';
+  let nStack = 0;
+  if (s.cur && !isHidden()) {
+    nStack++;
+    st += `<div class="item k-${s.cur.kind}${fresh("stack")}">${esc(s.cur.kind)}${s.cur.id ? " #" + s.cur.id : ""} ${esc(s.cur.label || "")}<div class="meta">${s.cur.bodyEnded ? "本体は終了 · マイクロタスクを実行中" : "タスク本体を実行中"}</div></div>`;
+    if (s.curMicro) {
+      nStack++;
+      st += `<div class="item k-micro${fresh("stack")}">microtask #${s.curMicro.id} ${esc(s.curMicro.label)}</div>`;
+    }
+  } else {
+    st += '<div class="empty">（空）ループが次のタスクを選ぶところ</div>';
+  }
+  $("stack").innerHTML = st;
+  $("nStack").textContent = nStack;
+
+  // microtasks
+  const ms = [...s.micro.values()];
+  const queued = ms.filter((m) => m.state === "queued").sort((a, b) => a.qseq - b.qseq);
+  const unknown = ms.filter((m) => m.state === "unknown").sort((a, b) => a.seq - b.seq);
+  const waitingM = ms.filter((m) => m.state === "waiting").sort((a, b) => a.seq - b.seq);
+  const mItem = (m) => `<div class="item k-micro${fresh("m" + m.id)}">#${m.id} ${esc(m.label)}<div class="meta">${m.line ? "line " + m.line + " · " : ""}task ${m.task}で登録</div></div>`;
+  let mh = "";
+  if (!isHidden()) {
+    mh += '<div class="group">キュー（先頭から実行）</div>' + (queued.length ? queued.map(mItem).join("") : '<div class="empty">空</div>');
+    if (unknown.length) mh += '<div class="group">await の続き（キュー投入の瞬間は観測できない）</div>' + unknown.map(mItem).join("");
+    if (waitingM.length) mh += '<div class="group">Promise の解決待ち</div>' + waitingM.map(mItem).join("");
+  }
+  $("micro").innerHTML = mh;
+  $("nMicro").textContent = isHidden() ? "?" : queued.length + unknown.length;
+
+  // timers
+  const ts = [...s.timers.values()].sort((a, b) => a.due - b.due || a.order - b.order);
+  $("timers").innerHTML = isHidden() ? "" : ts.length ? ts.map((t, i) => `<div class="item k-${t.kind === "interval" ? "interval" : "timer"}${i === 0 ? " next" : ""}${fresh("t" + t.id)}">期限 ${fmtT(t.due)} · #${t.id}<div class="meta">${esc(t.label || "")} · ${t.kind === "interval" ? "interval " : "delay "}${t.delay}ms</div></div>`).join("") : '<div class="empty">空</div>';
+  $("nTimers").textContent = isHidden() ? "?" : ts.length;
+
+  // ops
+  const os = [...s.ops.values()].sort((a, b) => a.id - b.id);
+  $("ops").innerHTML = isHidden() ? "" : os.length ? os.map((o) => `<div class="item k-op${fresh("o" + o.id)}">#${o.id} ${esc(o.kind)}<div class="meta">${esc(o.target)}</div><div class="meta">開始 ${fmtT(o.started)} → 完了予定 ${fmtT(o.due)}</div></div>`).join("") : '<div class="empty">空</div>';
+  $("nOps").textContent = isHidden() ? "?" : os.length;
+
+  // timeline
+  const tl = $("timeline");
+  if (isHidden()) {
+    tl.innerHTML = '<div class="empty">答え合わせまで非表示</div>';
+  } else {
+    const nearBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 40;
+    const logs = (arr) => arr.map((l) => `<div class="log${l.err ? " err" : ""}">${esc(l.text)}</div>`).join("");
+    tl.innerHTML = s.tasks.length ? s.tasks.map((t) => {
+      const cur = t === s.cur ? " current" : "";
+      return `<div class="task k-${t.kind}${cur}${fresh("task" + t.n)}"><div class="th"><span class="t">t=${fmtT(t.t)}</span><b>#${t.n} ${esc(t.kind)}${t.id ? " #" + t.id : ""}</b><span class="lbl">${esc(t.label || "")}</span></div>${logs(t.logs)}` +
+        (t.micro.length ? `<div class="drain">↓ マイクロタスク ${t.micro.length} 個</div>` : "") +
+        t.micro.map((m) => `<div class="micro${fresh("mr" + m.id)}"><div class="mh">#${m.id} ${esc(m.label)}</div>${logs(m.logs)}</div>`).join("") +
+        (t.err ? `<div class="terr">${esc(t.err)}</div>` : "") + "</div>";
+    }).join("") : '<div class="empty">「実行」か「1 タスク」で開始</div>';
+    if (nearBottom || follow) tl.scrollTop = tl.scrollHeight;
+  }
+
+  // console
+  const con = $("console");
+  if (isHidden()) {
+    con.innerHTML = '<span class="sys">（答え合わせまで非表示）</span>';
+  } else {
+    let h = s.console.map((l) => (l.err ? `<span class="e">${esc(l.text)}</span>` : esc(l.text))).join("\n");
+    if (s.truncated) h += '\n<span class="sys">… トレースが多すぎるため以降は省略</span>';
+    if (s.exit) h += (h ? "\n" : "") + (s.exit.err ? `<span class="e">${esc(s.exit.err)}</span>\n<span class="sys">[exit ${esc(s.exit.label || 1)}]</span>` : '<span class="sys">[exit 0]</span>');
+    con.innerHTML = h;
+    con.scrollTop = con.scrollHeight;
+  }
+
+  // permissions
+  $("nPerm").textContent = s.perms.length;
+  $("perms").innerHTML = s.perms.length ? s.perms.map((p, i) => {
+    const escaped = /(^|\/)\.\.(\/|$)/.test(p.target) || (p.path && p.target !== p.path && !p.path.endsWith("/" + p.target.replace(/^\.\//, "")));
+    return `<div class="perm ${p.allowed ? "allow" : "deny"}${fresh("p" + (i + 1))}"><span class="v">${p.allowed ? "✓ 許可" : "✗ 拒否"}</span> ${esc(p.kind)} <b>${esc(p.target)}</b>` +
+      (p.path ? `<div class="norm">→ 正規化: ${esc(p.path)}${escaped ? ' <span class="badge tag">../ や symlink を解決</span>' : ""}</div>` : "") +
+      (!p.allowed && p.flag ? `<div class="norm">${esc(p.flag)} が必要</div>` : "") + "</div>";
+  }).join("") : '<div class="empty">まだ検査なし</div>';
+
+  // status
+  let st2;
+  if (!session.loaded) st2 = "未実行";
+  else if (session.done) st2 = session.exit ? `終了 (exit ${session.exit.code})` : "終了";
+  else st2 = `タスク ${s.tasks.length} 個実行済み`;
+  $("status").textContent = st2 + (cursor < events.length ? ` · 再生 ${cursor}/${events.length}` : "");
+  $("dirty").hidden = !dirty || !session.loaded;
+  $("runBtn").disabled = $("stepBtn").disabled = $("evBtn").disabled = busy || !ready;
+  renderFiles();
+}
+
+let prevFiles = new Map();
+function renderFiles() {
+  const fs = session.files && session.files.length ? session.files : (defaults ? defaults.files : []);
+  $("files").innerHTML = fs.filter((f) => f.path !== "/").map((f) => {
+    const depth = f.path.split("/").length - 2;
+    const name = f.path.split("/").pop();
+    const pad = `padding-left:${depth * 12 + 4}px`;
+    const prev = prevFiles.get(f.path);
+    const ch = prev !== undefined && prev !== (f.content || "") + f.size ? " changed" : (prev === undefined && prevFiles.size ? " changed" : "");
+    if (f.type === "dir") return `<div class="f dir" style="${pad}">${esc(name)}/</div>`;
+    if (f.type === "symlink") return `<div class="f link" style="${pad}">${esc(name)} → ${esc(f.target)}</div>`;
+    return `<div class="f${ch}" style="${pad}" data-path="${esc(f.path)}"><span>${esc(name)}</span><span class="sz">${f.size} B</span></div>`;
+  }).join("");
+}
+$("files").addEventListener("click", (ev) => {
+  const el = ev.target.closest(".f[data-path]");
+  if (!el) return;
+  const fs = session.files && session.files.length ? session.files : defaults.files;
+  const f = fs.find((x) => x.path === el.dataset.path);
+  const v = $("fileView");
+  v.hidden = false;
+  v.textContent = f ? `${f.path}\n\n${f.content ?? "(大きいので省略)"}` : "";
+});
+
+// ---------- config ----------
+function grant(cb, val) { return { on: $(cb).checked, value: $(val).value.trim() }; }
+function currentName() { return $("preset").value || "editor.js"; }
+function config() {
+  return {
+    name: currentName(), source: $("src").value,
+    allowRead: grant("pr", "prv"), allowWrite: grant("pw", "pwv"), allowNet: grant("pn", "pnv"), allowEnv: grant("pe", "pev"),
+    timeoutMs: Math.max(0, +$("timeout").value || 0), fsLatencyMs: Math.max(0, +$("fslat").value || 0),
+    routes: routes,
+  };
+}
+function cliLine() {
+  const c = config();
+  const f = (name, g) => (g.on ? " --" + name + (g.value ? "=" + g.value : "") : "");
+  return `minirt examples/${c.name}${f("allow-read", c.allowRead)}${f("allow-write", c.allowWrite)}${f("allow-net", c.allowNet)}${f("allow-env", c.allowEnv)}${c.timeoutMs ? " --timeout=" + c.timeoutMs + "ms" : ""}`;
+}
+function syncPermInputs() {
+  for (const [cb, v] of [["pr", "prv"], ["pw", "pwv"], ["pn", "pnv"], ["pe", "pev"]]) $(v).disabled = !$(cb).checked;
+  $("cli").textContent = "$ " + cliLine();
+}
+function markDirty() { dirty = true; syncPermInputs(); render(); }
+
+let routes = [];
+function renderRoutes() {
+  $("routes").innerHTML = routes.map((r, i) => `<tr><td class="url">${esc(r.url)}${r.location ? " → " + esc(r.location) : ""}</td><td>${r.status}</td><td><input type="number" min="0" step="10" data-i="${i}" value="${r.delayMs}" aria-label="遅延"></td></tr>`).join("");
+}
+$("routes").addEventListener("input", (ev) => {
+  const i = ev.target.dataset.i;
+  if (i !== undefined) { routes[i].delayMs = Math.max(0, +ev.target.value || 0); markDirty(); }
+});
+
+function applyPreset(name) {
+  $("src").value = examples[name] || "";
+  const p = PRESET_PERMS[name] || {};
+  const set = (cb, v, val) => { $(cb).checked = val !== undefined; $(v).value = val || ""; };
+  set("pr", "prv", p.read); set("pw", "pwv", p.write); set("pn", "pnv", p.net); set("pe", "pev", p.env);
+  $("timeout").value = p.timeout || 2000;
+  try { localStorage.setItem("minirt.preset", name); } catch (e) {}
+  closeQuiz();
+  resetSession();
+}
+
+// ---------- session control ----------
+function showError(msg) { const b = $("errbox"); b.hidden = !msg; b.textContent = msg || ""; }
+
+function resetSession() {
+  events = []; cursor = 0; follow = true; S = freshState();
+  session = { loaded: false, done: false, exit: null, snapshot: null, files: [], flags: "" };
+  prevFiles = new Map();
+  dirty = false;
+  showError("");
+  syncPermInputs();
+  render();
+}
+
+async function ensureLoaded() {
+  if (session.loaded && !dirty) return true;
+  resetSession();
+  const m = await call({ type: "load", config: config() }, 0);
+  if (!m.r.ok) { showError("読み込みエラー: " + m.r.error); return false; }
+  session.loaded = true; session.flags = m.r.flags;
+  setFiles(m.files);
+  return true;
+}
+
+function setFiles(files) {
+  if (session.files && session.files.length) prevFiles = new Map(session.files.map((f) => [f.path, (f.content || "") + f.size]));
+  session.files = files || [];
+}
+
+function handleResult(m) {
+  const r = m.r;
+  session.snapshot = r.snapshot;
+  setFiles(m.files);
+  if (r.done) { session.done = true; session.exit = { code: r.exitCode || 0, error: r.error }; }
+}
+
+async function handleWallTimeout() {
+  // The worker was terminated mid-task: synthesize the exit and restart.
+  const e = { type: "exit", err: "error: execution timed out（1 タスクが実時間 " + config().timeoutMs + "ms 以内に戻らず、Worker を強制終了）", label: "124", t: S.now };
+  events.push(e);
+  session.done = true; session.exit = { code: 124, error: e.err };
+  follow = true; catchUp();
+  if (S.cur) { S.cur.err = "（強制終了）"; S.cur = null; S.curMicro = null; }
+  render();
+  $("status").textContent = "Worker 再起動中…";
+  await startWorker();
+  render();
+}
+
+function wallMs() { const t = config().timeoutMs; return t > 0 ? Math.max(t, 300) : 0; }
+
+async function withBusy(fn) {
+  if (busy || !ready) return;
+  busy = true; render();
+  try { await fn(); }
+  catch (e) { if (e.wall) await handleWallTimeout(); else showError(String(e.message || e)); }
+  finally { busy = false; catchUp(); render(); }
+}
+
+async function runAll() {
+  await withBusy(async () => {
+    if (session.done && !dirty) resetSession();
+    if (!(await ensureLoaded())) return;
+    follow = true;
+    while (!session.done) {
+      const m = await call({ type: "run", max: 200 }, wallMs());
+      handleResult(m);
+      catchUp(); render();
+    }
+  });
+}
+
+async function stepTask() {
+  await withBusy(async () => {
+    if (session.done && !dirty && cursor >= events.length) resetSession();
+    if (!(await ensureLoaded())) return;
+    if (cursor < events.length) { follow = true; catchUp(); return; } // finish the replay of the current step first
+    follow = true;
+    if (!session.done) handleResult(await call({ type: "step" }, wallMs()));
+  });
+}
+
+async function stepEvent() {
+  await withBusy(async () => {
+    if (session.done && !dirty && cursor >= events.length) resetSession();
+    if (!(await ensureLoaded())) return;
+    follow = false;
+    if (cursor >= events.length && !session.done) handleResult(await call({ type: "step" }, wallMs()));
+    if (cursor < events.length) { S.fresh = new Set(); apply(events[cursor++]); }
+  });
+}
+
+// ---------- quiz ----------
+function closeQuiz() { quiz = null; $("quiz").hidden = true; }
+async function startQuiz() {
+  await withBusy(async () => {
+    dirty = true;
+    if (!(await ensureLoaded())) return;
+    quiz = { lines: [], picked: [], revealed: false };
+    follow = true;
+    while (!session.done) { handleResult(await call({ type: "run", max: 500 }, wallMs())); }
+    catchUp();
+    quiz.lines = S.console.filter((l) => !l.err).map((l) => l.text);
+    if (quiz.lines.length < 2 || quiz.lines.length > 24) {
+      showError(quiz.lines.length < 2 ? "出力が 2 行未満なのでクイズにならない" : "出力が多すぎる（24 行まで）");
+      quiz = null; return;
+    }
+    quiz.order = quiz.lines.map((_, i) => i);
+    for (let i = quiz.order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [quiz.order[i], quiz.order[j]] = [quiz.order[j], quiz.order[i]]; }
+    $("quiz").hidden = false;
+    renderQuiz();
+  });
+}
+function renderQuiz() {
+  if (!quiz) return;
+  $("chips").innerHTML = quiz.order.filter((i) => !quiz.picked.includes(i)).map((i) => `<button data-i="${i}">${esc(quiz.lines[i])}</button>`).join("") || (quiz.revealed ? "" : '<span class="muted">全部選んだ → 答え合わせ</span>');
+  $("answer").innerHTML = quiz.picked.map((i, pos) => {
+    if (!quiz.revealed) return `<li>${pos + 1}. ${esc(quiz.lines[i])}</li>`;
+    const ok = quiz.lines[i] === quiz.lines[pos];
+    return `<li class="${ok ? "right" : "wrong"}">${pos + 1}. ${esc(quiz.lines[i])}${ok ? "" : ` <span class="exp">（正解: ${esc(quiz.lines[pos])}）</span>`}</li>`;
+  }).join("");
+  $("quizCheck").disabled = quiz.revealed || quiz.picked.length !== quiz.lines.length;
+  $("quizUndo").disabled = quiz.revealed || !quiz.picked.length;
+}
+$("chips").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-i]");
+  if (!b || !quiz || quiz.revealed) return;
+  quiz.picked.push(+b.dataset.i); renderQuiz();
+});
+$("quizUndo").onclick = () => { if (quiz) { quiz.picked.pop(); renderQuiz(); } };
+$("quizCheck").onclick = () => {
+  if (!quiz) return;
+  quiz.revealed = true;
+  const right = quiz.picked.filter((i, pos) => quiz.lines[i] === quiz.lines[pos]).length;
+  $("quizScore").textContent = `${right} / ${quiz.lines.length} 正解` + (right === quiz.lines.length ? " — 完璧！" : " — タイムラインで理由を確認しよう");
+  renderQuiz(); render();
+};
+$("quizClose").onclick = () => { closeQuiz(); render(); };
+
+// ---------- wiring ----------
+$("runBtn").onclick = runAll;
+$("stepBtn").onclick = stepTask;
+$("evBtn").onclick = stepEvent;
+$("resetBtn").onclick = () => { if (!busy) { closeQuiz(); resetSession(); } };
+$("quizBtn").onclick = startQuiz;
+$("preset").onchange = () => applyPreset($("preset").value);
+$("src").addEventListener("input", markDirty);
+for (const id of ["pr", "prv", "pw", "pwv", "pn", "pnv", "pe", "pev", "timeout", "fslat"]) $(id).addEventListener("input", markDirty);
+
+// For automated checks: compare the trace-reconstructed timer heap and op
+// list with the Go-side snapshot at a step boundary.
+window.__minirtCheck = () => {
+  const snap = session.snapshot;
+  if (!snap) return { ok: false, why: "no snapshot" };
+  const a = [...S.timers.values()].sort((x, y) => x.due - y.due || x.order - y.order).map((t) => t.id + "@" + t.due).join(",");
+  const b = snap.timers.map((t) => t.id + "@" + t.due).join(",");
+  const oa = [...S.ops.keys()].sort((x, y) => x - y).join(","), ob = snap.ops.map((o) => o.id).join(",");
+  return { ok: a === b && oa === ob && S.now === snap.now, timers: [a, b], ops: [oa, ob], now: [S.now, snap.now] };
+};
+
+(async function init() {
+  S = freshState();
+  try {
+    const m = await startWorker();
+    examples = m.examples; defaults = m.defaults;
+    routes = defaults.routes.map((r) => ({ ...r }));
+    renderRoutes();
+    const names = [...PRESET_ORDER.filter((n) => examples[n]), ...Object.keys(examples).filter((n) => !PRESET_ORDER.includes(n)).sort()];
+    $("preset").innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join("");
+    let saved = null;
+    try { saved = localStorage.getItem("minirt.preset"); } catch (e) {}
+    const first = saved && examples[saved] ? saved : "timers.js";
+    $("preset").value = first;
+    $("loading").hidden = true;
+    $("app").hidden = false;
+    applyPreset(first);
+  } catch (e) {
+    $("loading").innerHTML = '<span class="err">wasm の読み込みに失敗しました: ' + esc(e.message || e) + "</span>";
+  }
+})();
+</script>
+</body>
+</html>

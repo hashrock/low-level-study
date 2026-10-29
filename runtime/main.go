@@ -3,15 +3,19 @@ package main
 // main.go — CLI: parse flags, build Permissions, run the script.
 //
 //   minirt script.js [--allow-read[=a,b]] [--allow-write[=..]] [--allow-net[=h1,h2]]
-//                    [--allow-env[=A,B]] [--timeout=5s] [--max-stack=N] [-- script args]
+//                    [--allow-env[=A,B]] [--timeout=5s] [--max-stack=N]
+//                    [--virtual-time] [--trace] [-- script args]
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"minirt/minirt"
 )
 
 const usage = `usage: minirt <script.js> [flags] [-- args...]
@@ -23,15 +27,17 @@ flags (everything is denied unless granted):
   --allow-env[=NAME,...]    Sandbox.env.get; no value = all
   --timeout=DURATION        wall-clock limit (default 30s, 0 = none)
   --max-stack=N             max JS call depth (default 10000)
+  --virtual-time            deterministic virtual clock (timers jump, Date.now() is virtual)
+  --trace                   print the event-loop trace as JSON lines to stderr
 `
 
 type cliConfig struct {
 	script string
-	opts   Options
+	opts   minirt.Options
 }
 
 func parseArgs(args []string) (*cliConfig, error) {
-	cfg := &cliConfig{opts: Options{Timeout: 30 * time.Second, MaxCallStack: 10000}}
+	cfg := &cliConfig{opts: minirt.Options{Timeout: 30 * time.Second, MaxCallStack: 10000}}
 	var readAll, writeAll bool
 	var readPaths, writePaths []string
 	for i := 0; i < len(args); i++ {
@@ -66,9 +72,9 @@ func parseArgs(args []string) (*cliConfig, error) {
 			writeAll = !hasVal
 			writePaths = append(writePaths, list()...)
 		case "allow-net":
-			cfg.opts.Perms.Net = Grant{All: !hasVal, Items: list()}
+			cfg.opts.Perms.Net = minirt.Grant{All: !hasVal, Items: list()}
 		case "allow-env":
-			cfg.opts.Perms.Env = Grant{All: !hasVal, Items: list()}
+			cfg.opts.Perms.Env = minirt.Grant{All: !hasVal, Items: list()}
 		case "timeout":
 			d, err := time.ParseDuration(val)
 			if err != nil {
@@ -81,6 +87,11 @@ func parseArgs(args []string) (*cliConfig, error) {
 				return nil, fmt.Errorf("--max-stack: invalid value %q", val)
 			}
 			cfg.opts.MaxCallStack = n
+		case "virtual-time":
+			cfg.opts.VirtualClock = true
+		case "trace":
+			enc := json.NewEncoder(os.Stderr)
+			cfg.opts.Trace = func(e minirt.Event) { _ = enc.Encode(e) }
 		case "help":
 			return nil, errors.New("")
 		default:
@@ -91,10 +102,10 @@ func parseArgs(args []string) (*cliConfig, error) {
 		return nil, errors.New("no script given")
 	}
 	var err error
-	if cfg.opts.Perms.Read, err = NewPathGrant(readAll, readPaths); err != nil {
+	if cfg.opts.Perms.Read, err = minirt.NewPathGrant(readAll, readPaths); err != nil {
 		return nil, fmt.Errorf("--allow-read: %w", err)
 	}
-	if cfg.opts.Perms.Write, err = NewPathGrant(writeAll, writePaths); err != nil {
+	if cfg.opts.Perms.Write, err = minirt.NewPathGrant(writeAll, writePaths); err != nil {
 		return nil, fmt.Errorf("--allow-write: %w", err)
 	}
 	return cfg, nil
@@ -109,16 +120,13 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	rt, err := NewRuntime(cfg.opts)
+	rt, err := minirt.NewRuntime(cfg.opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 	if err := rt.RunFile(cfg.script); err != nil {
-		fmt.Fprintln(os.Stderr, FormatError(err))
-		if errors.Is(err, ErrTimeout) {
-			os.Exit(124)
-		}
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, minirt.FormatError(err))
+		os.Exit(minirt.ExitCode(err))
 	}
 }

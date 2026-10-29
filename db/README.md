@@ -1,6 +1,6 @@
 # minidb — 学習用の小さなリレーショナルデータベース
 
-Go 標準ライブラリだけで書いた、約 1900 行 (テスト除く) のおもちゃ RDB です。
+Go 標準ライブラリだけで書いた、約 1900 行 (テスト・観察用コード除く) のおもちゃ RDB です。
 「SQL 文字列がどうやってディスク上のバイト列になるのか」を端から端まで追えることを目標にしています。
 
 ## 動かし方
@@ -9,6 +9,7 @@ Go 標準ライブラリだけで書いた、約 1900 行 (テスト除く) の�
 go run .              # minidb.db を開く (無ければ作る)
 go run . my.db        # 任意のファイル
 go test ./...         # テスト
+../web/db/build.sh    # ブラウザ版 (web/db/main.wasm) をビルド
 ```
 
 REPL では SQL を `;` で終えると実行されます。メタコマンド: `.tables` `.schema` `.exit`。
@@ -101,15 +102,45 @@ NULL との比較は常に偽になります。
  ディスク上の 1 ファイル
 ```
 
+本体はインポート可能なパッケージ `minidb/minidb` (ディレクトリ `minidb/`) にあり、
+`main.go` (REPL) と `cmd/wasm` (ブラウザ版) はそれを使うだけです。
+
 | ファイル | 役割 |
 |---|---|
 | `main.go` | REPL、結果の表形式表示 |
-| `lexer.go` / `ast.go` / `parser.go` | SQL → AST |
-| `executor.go` | 文の実行、式の評価、主キー検索の最適化 |
-| `db.go` | DB の Open/Close、カタログ (ページ 0) の読み書き |
-| `record.go` | 値 (`Value`) と行のエンコード |
-| `btree.go` | B+tree (検索・挿入と分割・削除・スキャン) |
-| `pager.go` | ページ単位の I/O とキャッシュ |
+| `minidb/lexer.go` / `ast.go` / `parser.go` | SQL → AST |
+| `minidb/executor.go` | 文の実行、式の評価、主キー検索の最適化 |
+| `minidb/db.go` | DB の Open/Close、カタログ (ページ 0) の読み書き |
+| `minidb/record.go` | 値 (`Value`) と行のエンコード |
+| `minidb/btree.go` | B+tree (検索・挿入と分割・削除・スキャン) |
+| `minidb/pager.go` | ページ単位の I/O とキャッシュ。ファイルは `File` インターフェース越しに扱う |
+| `minidb/memfile.go` | メモリ上の `File` 実装 (ブラウザ版・テスト用) |
+| `minidb/stats.go` | 文ごとの統計 (触ったページ、主キー検索か全件スキャンか、読んだ行数) |
+| `minidb/inspect.go` | 内部を覗く API (テーブル一覧、木のダンプ、ページの注釈付きダンプ、キャッシュ状態) |
+| `cmd/wasm/main.go` | ブラウザ版のエントリポイント (`GOOS=js GOARCH=wasm` 専用) |
+
+### ブラウザ版 (web/db)
+
+`web/db/build.sh` で `web/db/main.wasm` をビルドし、`python3 -m http.server -d web 8000` で
+`http://localhost:8000/db/` を開くと、SQL コンソール・B+tree の図・ページのヘックスダンプ・
+キャッシュと文ごとの統計を見ながら操作できます。DB はメモリ上の `MemFile` に置かれ、
+「.db を保存」でダウンロードしたファイルはこの CLI でそのまま開けます (逆も可)。
+
+観察用 API (どれもページャの LRU 順やカウンタを変えません):
+
+```go
+db, _ := minidb.OpenMem(nil)          // OpenFile(f File, size) / Open(path) もある
+db.Exec("SELECT * FROM users WHERE id = 5")
+db.LastStats()                        // []*StmtStats: access (pk-lookup/full-scan/pk-insert), rowsExamined,
+                                      //   pageGets, diskReads/Writes, touched/dirtied/allocated, splits ...
+db.TableInfos()                       // テーブルとルートページ
+db.TreeDump("users")                  // *TreeNode: page, type, keys, children, next, used/free
+db.PageInfo(3)                        // 生バイト + バイト範囲の注釈 + デコードしたセル
+db.PageBytes(3)
+db.CacheState()                       // LRU 順のキャッシュ中ページ、dirty、累計カウンタ
+db.SetCacheCapacity(4)
+db.Snapshot()                         // DB ファイル全体のバイト列
+```
 
 ### ファイルとページ
 
@@ -122,7 +153,7 @@ DB は 1 つのファイルで、4096 バイトの固定長ページが並んで
                      ルート    ルート    分割で増えたノード
 ```
 
-**ページャ (pager.go)** はページ ID を受け取ってメモリ上の `Page` を返します。
+**ページャ (minidb/pager.go)** はページ ID を受け取ってメモリ上の `Page` を返します。
 最大 64 ページを LRU でキャッシュし、溢れたら最も古いページを (変更されていれば書き戻してから) 捨てます。
 SQL 文を 1 つ実行するたびに、変更されたページ (dirty) を全部書き出して `fsync` します。
 

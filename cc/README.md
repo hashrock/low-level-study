@@ -12,23 +12,45 @@ C のサブセット (`int` `char` `long` ポインタ 配列 `struct` …) を 
 ```sh
 go run . emit  examples/fib.c                 # アセンブリを表示 (ソース行のコメント付き)
 go run . emit  -O0 examples/fib.c             # 最適化なし (素朴なスタックマシン)
-go run . build examples/list.c -o /tmp/list   # ../asm で ELF を作る (複数の .c も可)
+go run . build examples/list.c -o /tmp/list   # ELF を作る (複数の .c も可。../asm をライブラリとして使う)
 go run . run   examples/argv.c hello world    # build して ../emu で実行 (後ろは argv)
 go run . run   --stats bench/fib25.c          # 実行命令数を表示
 go vet ./... && go test ./...                 # 例題・テストスイート・ホスト cc との照合
 go test -v -run TestBench .                   # -O0/-O1/-O2 の命令数を表示
 ```
 
+### ライブラリとして使う (`rvcc/rvcc`)
+
+コンパイラ本体は `rvcc/rvcc` パッケージで、ファイルもサブプロセスも使いません
+(`GOOS=js GOARCH=wasm` でもそのまま動きます)。アセンブル・リンクは `../asm` の `rvasm/rvasm` を
+`go.mod` の `replace rvasm => ../asm` で直接 import しているので、C → ELF がすべてメモリ上で完結します。
+
+```go
+out, err := rvcc.Compile("fib.c", src, 2)   // *Output: Asm (アセンブリ) と Lines
+                                            //   Lines[k] = アセンブリ k+1 行目を生んだ C の行 (0 は対応なし)
+exe, err := rvcc.Build([]rvcc.Source{{Name: "fib.c", Text: src}}, 2)  // []byte: libc とリンクした ELF
+
+outs, err := rvcc.CompileAll(srcs, 2)       // [crt0.s, libc.s, 各 .s] の *Output (途中経過を見せたいとき)
+p, err := rvasm.BuildProgram(rvcc.AsmSources(outs)...)  // → リスティング・リロケーション付きでリンク
+crt0, libcC, libcH := rvcc.Libc()           // 埋め込みの libc のソース
+```
+
+エラーは `*rvcc.Error` (`File` `Line` `Col` `Msg`、表示は `fib.c:3:12: error: ...`) で返ります。
+`run` サブコマンドだけは今も `../emu` を `go run` で起動します。
+
 ## ファイル構成
+
+`main.go` (CLI) 以外のコンパイラは `rvcc/` パッケージに、libc は `rvcc/libc/` にあります。
 
 | ファイル | 行数 | 役割 |
 |---|---:|---|
+| `api.go` | | 公開 API (`Compile` `CompileAll` `Build` `Libc`)、アセンブリ行 → C の行の対応 |
 | `lexer.go` | 224 | 字句解析。`#` で始まる行は読み飛ばす、隣接する文字列の連結、`__LINE__` |
 | `ast.go` | 184 | 型 (`Type`)、変数・関数 (`Obj`)、構文木 (`Node`)、struct のレイアウト計算 |
 | `parser.go` | 884 | 再帰下降パーサ。スコープ・typedef・enum・struct タグの解決、初期化子の展開 |
 | `check.go` | 456 | **型付けパス**: 式に型を付け、ポインタ演算の拡大・暗黙の型変換を木に書き込む。定数式の計算 |
 | `codegen.go` | 797 | 型付きの木 → アセンブリ。フレーム配置、式スタック、-O0/-O1/-O2 |
-| `main.go` | 183 | CLI、libc の埋め込み、`../asm` `../emu` の起動 |
+| `main.go` | | CLI (`emit` / `build` / `run`)、`../emu` の起動 |
 | **コンパイラ計** | **2,728** | (うちコメント・空行を除くと約 2,450) |
 | `libc/crt0.s` | 41 | `_start` と システムコール 4 つ (`exit` `write` `read` `__brk`) |
 | `libc/libc.c` | 222 | `printf` `puts` `putchar` `malloc` `strlen` `strcmp` `memcpy` `memset` … **rvcc 自身でコンパイル** |
@@ -38,7 +60,7 @@ go test -v -run TestBench .                   # -O0/-O1/-O2 の命令数を表�
 | `examples/*.c` | | hello, fib, sieve, list, strings, structs, argv, qsort と期待出力 `*.out` |
 | `bench/` | | `fib25.c` と、`../compiler` 用の同じプログラム `fib25.lang` |
 
-`libc/` に置いているのは、Go のツールがパッケージ直下の `.s` を Go アセンブラのファイルとみなすためです
+`rvcc/libc/` に置いているのは、Go のツールがパッケージ直下の `.s` を Go アセンブラのファイルとみなすためです
 (`../compiler` の `runtime/` と同じ理由)。libc は `go:embed` でバイナリに埋め込みます。
 
 ## 処理の流れ

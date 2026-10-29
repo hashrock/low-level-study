@@ -1,0 +1,73 @@
+/* 全ページ共通のスタイル。色は必ずこのトークンを使う（ダークモード対応のため）。 */
+:root {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --panel-2: #f3f1ec;
+  --border: #e2ded6;
+  --text: #1d1b18;
+  --muted: #6b665d;
+  --accent: #2f6fdb;      /* 選択・現在位置 */
+  --accent-soft: #dfe9fb;
+  --ok: #1f8a4c;
+  --warn: #b76e00;
+  --err: #c43c3c;
+  --hl: #fff3b0;          /* 直前に変化した値のハイライト */
+  --c1: #2f6fdb; --c2: #1f8a4c; --c3: #b76e00; --c4: #8a46c9; --c5: #c43c3c; --c6: #127f8c; /* 系列色 */
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --radius: 6px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15161a; --panel: #1d1f24; --panel-2: #24272d; --border: #34373f;
+    --text: #e6e4df; --muted: #9a968e; --accent: #6ea0ff; --accent-soft: #23314d;
+    --ok: #4cc283; --warn: #e3a547; --err: #ef6b6b; --hl: #4a4220;
+    --c1: #6ea0ff; --c2: #4cc283; --c3: #e3a547; --c4: #b88af0; --c5: #ef6b6b; --c6: #4fc4d1;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15161a; --panel: #1d1f24; --panel-2: #24272d; --border: #34373f;
+  --text: #e6e4df; --muted: #9a968e; --accent: #6ea0ff; --accent-soft: #23314d;
+  --ok: #4cc283; --warn: #e3a547; --err: #ef6b6b; --hl: #4a4220;
+  --c1: #6ea0ff; --c2: #4cc283; --c3: #e3a547; --c4: #b88af0; --c5: #ef6b6b; --c6: #4fc4d1;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); }
+header.top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+header.top h1 { font-size: 16px; margin: 0; }
+header.top a { color: var(--muted); text-decoration: none; }
+header.top a:hover { color: var(--accent); }
+main { padding: 12px 16px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; min-width: 0; overflow: auto; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
+.toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+button, select, input[type=text], input[type=number] {
+  font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 4px 10px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+textarea, pre, code, .mono { font-family: var(--mono); font-size: 12.5px; }
+textarea { width: 100%; min-height: 240px; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; resize: vertical; tab-size: 4; }
+pre { margin: 0; white-space: pre; overflow: auto; }
+.terminal { background: #0f1013; color: #d8d6d0; padding: 8px; border-radius: var(--radius); min-height: 280px; max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-all; font-family: var(--mono); font-size: 13px; outline: none; }
+.terminal:focus { box-shadow: 0 0 0 2px var(--accent); }
+table.kv { border-collapse: collapse; font-family: var(--mono); font-size: 12px; width: 100%; }
+table.kv td, table.kv th { padding: 1px 6px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+table.kv th { color: var(--muted); font-weight: normal; }
+.changed { background: var(--hl); }
+.current { background: var(--accent-soft); }
+.muted { color: var(--muted); }
+.err { color: var(--err); }
+.ok { color: var(--ok); }
+.badge { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); background: var(--panel-2); }
+.loading { color: var(--muted); padding: 24px; text-align: center; }
+@media (max-width: 640px) { main { padding: 10px 16px; } .grid { grid-template-columns: 1fr; } }

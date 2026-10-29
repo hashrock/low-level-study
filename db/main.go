@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"minidb/minidb"
 )
 
 // REPL: 標準入力から ; で終わる SQL を読み、実行して表形式で表示する。
@@ -15,7 +17,7 @@ func main() {
 	if len(os.Args) > 1 {
 		path = os.Args[1]
 	}
-	db, err := Open(path)
+	db, err := minidb.Open(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open:", err)
 		os.Exit(1)
@@ -67,13 +69,16 @@ func main() {
 	}
 }
 
-func metaCommand(db *DB, cmd string) {
+func metaCommand(db *minidb.DB, cmd string) {
 	switch cmd {
 	case ".tables":
-		fmt.Println(strings.Join(db.order, " "))
+		var names []string
+		for _, t := range db.Tables() {
+			names = append(names, t.Name)
+		}
+		fmt.Println(strings.Join(names, " "))
 	case ".schema":
-		for _, name := range db.order {
-			t := db.tables[name]
+		for _, t := range db.Tables() {
 			var cols []string
 			for _, c := range t.Columns {
 				s := c.Name + " " + c.Type.String()
@@ -89,7 +94,7 @@ func metaCommand(db *DB, cmd string) {
 	}
 }
 
-func printResult(r *Result) {
+func printResult(r *minidb.Result) {
 	if r.Columns == nil {
 		fmt.Println(r.Message)
 		return

@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zigos CPU ビューア</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .wide { grid-column: 1 / -1; }
+  @media (min-width: 1000px) { .span2 { grid-column: span 2; } }
+  .priv { font-weight: bold; min-width: 2.4em; text-align: center; }
+  .priv-U { color: var(--c2); border-color: var(--c2); }
+  .priv-S { color: var(--c3); border-color: var(--c3); }
+  .priv-M { color: var(--c5); border-color: var(--c5); }
+  .scroll { max-height: 420px; overflow: auto; }
+  .termpanel { display: flex; flex-direction: column; }
+  .terminal { min-height: 320px; height: 420px; max-height: 70vh; }
+  @media (min-width: 1000px) { .termpanel .terminal { flex: 1; max-height: none; } }
+  .term-cursor { background: var(--accent); }
+  .terminal:not(:focus) .term-cursor { background: transparent; outline: 1px solid currentColor; }
+  .notes { margin: 0; padding-left: 1.2em; }
+  .notes li { margin: 2px 0; }
+  .notes code, .hint code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+  table.kv td.v { font-variant-numeric: tabular-nums; }
+  table.kv td.dec { color: var(--muted); white-space: normal; }
+  .sym { color: var(--c4); }
+  .sym-row td { color: var(--c4); padding-top: 4px; border-bottom: none; }
+  .kind-exception { color: var(--c5); }
+  .kind-interrupt { color: var(--c3); }
+  .kind-mret, .kind-sret { color: var(--c2); }
+  .kind-syscall { color: var(--c1); }
+  .hexdump td.b { padding: 1px 2px; }
+  .hexdump td.ascii { color: var(--muted); padding-left: 8px; }
+  .status { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input.addr { width: 13em; font-family: var(--mono); }
+  input.n { width: 6.5em; }
+  .inputrow { display: flex; gap: 6px; margin-top: 8px; }
+  .inputrow input { flex: 1; min-width: 0; font-family: var(--mono); }
+  .split { display: grid; gap: 8px; grid-template-columns: 1fr; }
+  .split h3 { font-size: 12px; color: var(--muted); margin: 6px 0 4px; font-weight: normal; }
+  #error:empty { display: none; }
+  #error { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>zigos を RISC-V エミュレータで動かす</h1>
+  <div class="status">
+    <span class="badge priv" id="privBadge" title="現在の特権モード">-</span>
+    <span class="badge" id="runBadge">停止中</span>
+    <span class="mono muted" id="mips">0.0 MIPS</span>
+  </div>
+</header>
+<main>
+  <div id="loading" class="loading">wasm とカーネルを読み込み中…</div>
+  <pre id="error" class="err"></pre>
+  <div id="app" hidden>
+    <div class="grid">
+      <section class="panel wide">
+        <h2>試してみよう</h2>
+        <ul class="notes">
+          <li>Go で書いた RISC-V エミュレータ (<code>emu/</code>) を wasm にして、Zig で書いた小さな OS (<code>os/</code>) をブラウザの中で起動しています。ターミナルをクリックして <code>ls</code>, <code>cat /etc/motd</code>, <code>ps</code>, <code>uptime</code>, <code>run counter &amp;</code> と打ってみましょう。</li>
+          <li>「一時停止」→「次のトラップまで」を押すと、シェルが <code>ecall</code> でカーネルを呼んだ瞬間 (U→M) や、カーネルが <code>mret</code> でシェルに戻る瞬間 (M→U) で止まります。右上の特権モードバッジと mcause / mepc の変化を見てください。</li>
+          <li>「1 ステップ」で 1 命令ずつ進めると、トラップベクタ (<code>trap_vector</code>) がレジスタを保存していく様子がわかります。ecall の a7 はシステムコール番号 (トラップログに名前を表示)。</li>
+          <li>入力待ちのあいだカーネルは M モードで <code>wfi</code> して待っており、タイマは割り込みとしてではなくループの中で処理されるのでトラップは起きません。キーを押すとシェルが起き上がります。</li>
+          <li>mtime は 1 命令ごとに 1 増えます (10 MHz 相当)。待ち (wfi) の間だけ実時間に合わせて進めるので、<code>uptime</code> はだいたい実時間になります。</li>
+        </ul>
+      </section>
+
+      <section class="panel wide">
+        <div class="toolbar" style="margin-bottom:0">
+          <button class="primary" id="btnRun">一時停止</button>
+          <button id="btnStep" title="1 命令 (またはトラップの受付 1 回) 実行">1 ステップ</button>
+          <button id="btnStepN">N ステップ</button>
+          <input class="n" type="number" id="stepN" value="100" min="1" max="10000000" aria-label="N">
+          <button id="btnTrap" title="次の ecall / 割り込み / mret まで実行">次のトラップまで</button>
+          <button id="btnReset">リセット</button>
+          <label class="muted">速度
+            <select id="speed">
+              <option value="auto" selected>最大</option>
+              <option value="100000">10 万命令/フレーム</option>
+              <option value="10000">1 万命令/フレーム</option>
+              <option value="1000">1000 命令/フレーム</option>
+              <option value="100">100 命令/フレーム</option>
+              <option value="10">10 命令/フレーム</option>
+              <option value="1">1 命令/フレーム</option>
+            </select>
+          </label>
+          <span class="mono muted" id="instret"></span>
+        </div>
+      </section>
+
+      <section class="panel span2 termpanel">
+        <h2>ターミナル (UART)</h2>
+        <div class="terminal" id="term" tabindex="0" aria-label="zigos ターミナル"></div>
+        <div class="inputrow">
+          <input type="text" id="line" placeholder="1 行入力して Enter (スマホ用)" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button id="btnSend">送信</button>
+        </div>
+        <div class="muted" style="margin-top:4px;font-size:12px">Enter は <code>\r</code>、Backspace は DEL (0x7f)、Ctrl-U で行消去。未読の入力: <span id="pending">0</span> バイト</div>
+      </section>
+
+      <section class="panel">
+        <h2>CPU の状態</h2>
+        <table class="kv" id="regs"></table>
+        <div class="split">
+          <div>
+            <h3>pc・時刻</h3>
+            <table class="kv" id="misc"></table>
+          </div>
+          <div>
+            <h3>CSR</h3>
+            <table class="kv" id="csrs"></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>逆アセンブル (pc の前後)</h2>
+        <div class="scroll" id="disasmBox"><table class="kv" id="disasm"></table></div>
+      </section>
+
+      <section class="panel">
+        <h2>実行トレース (直近 64 命令)</h2>
+        <div class="scroll" id="traceBox"><table class="kv" id="trace"></table></div>
+      </section>
+
+
+      <section class="panel">
+        <h2>メモリ</h2>
+        <div class="toolbar">
+          <input class="addr" type="text" id="memAddr" value="0x80000000" aria-label="アドレス">
+          <button id="btnMem">表示</button>
+        </div>
+        <div class="toolbar">
+          <button data-mem="0x80000000">カーネル .text</button>
+          <button data-mem="0x10000000">UART</button>
+          <button data-mem="0x02004000">CLINT mtimecmp</button>
+          <button data-mem="0x0200bff0">CLINT mtime</button>
+          <button data-mem="sp">sp</button>
+          <button data-mem="mscratch">TrapFrame (mscratch)</button>
+        </div>
+        <div class="scroll"><table class="kv hexdump" id="mem"></table></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>トラップログ (新しい順)</h2>
+        <div class="scroll"><table class="kv" id="traps"></table></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="../shared/wasm_exec.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const RAM_MIB = 4;              // zigos は __kernel_end ≈ 0x800ab200 までしか使わない
+const TICKS_PER_MS = 10000;     // mtime は 10MHz
+const REFRESH_MS = 200;         // 実行中にパネルを描き直す間隔
+
+// os/src/syscall_nums.zig の番号
+const SYSCALLS = ["exit", "read", "write", "open", "close", "mkdir", "unlink", "chdir", "getcwd",
+  "readdir", "ps", "uptime", "sleep", "spawn", "getpid", "yield", "halt"];
+const REG_NAMES = ["zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+  "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"];
+const PRIV_NAME = { U: "U (ユーザ)", S: "S (スーパーバイザ)", M: "M (マシン)" };
+
+let running = true, untilTrap = false, lastT = 0, lastRefresh = 0;
+let budget = 200000;                       // 「最大」速度で 1 フレームに実行する命令数 (自動調整)
+let idleFrames = 0, mipsSteps = 0, mipsT = performance.now();
+let prevState = null, prevMem = null, memAddr = "0x80000000";
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function showError(msg) { $("error").textContent += msg + "\n"; }
+function short(hex) { return hex.startsWith("00000000") ? hex.slice(8) : hex; }
+function big(hex) { return BigInt("0x" + hex); }
+function bit(v, n) { return Number((v >> BigInt(n)) & 1n); }
+
+// ---- ターミナル (\r, \n, \b, ESC[2J / ESC[H だけ解釈する小さな端末) ----
+const term = { lines: [[]], row: 0, col: 0, esc: "" };
+function termWrite(s) {
+  for (const ch of s) {
+    if (term.esc) {
+      term.esc += ch;
+      if (/[A-Za-z]/.test(ch)) {
+        if (term.esc === "\x1b[2J" || term.esc === "\x1b[H") { term.lines = [[]]; term.row = 0; term.col = 0; }
+        term.esc = "";
+      } else if (term.esc.length > 8) term.esc = "";
+      continue;
+    }
+    if (ch === "\x1b") { term.esc = ch; continue; }
+    if (ch === "\r") { term.col = 0; continue; }
+    if (ch === "\n") {
+      term.row++; term.col = 0;
+      if (term.row >= term.lines.length) term.lines.push([]);
+      if (term.lines.length > 2000) { term.lines.splice(0, term.lines.length - 2000); term.row = term.lines.length - 1; }
+      continue;
+    }
+    if (ch === "\b") { term.col = Math.max(0, term.col - 1); continue; }
+    if (ch < " " && ch !== "\t") continue;
+    const line = term.lines[term.row];
+    while (line.length < term.col) line.push(" ");
+    line[term.col++] = ch;
+  }
+}
+function termRender() {
+  const el = $("term");
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+  const before = term.lines.slice(0, term.row).map((l) => l.join("")).join("\n");
+  const cur = term.lines[term.row];
+  el.textContent = "";
+  el.append((term.row ? before + "\n" : "") + cur.slice(0, term.col).join(""));
+  const c = document.createElement("span");
+  c.className = "term-cursor";
+  c.textContent = cur[term.col] || " ";
+  el.append(c, cur.slice(term.col + 1).join(""));
+  const after = term.lines.slice(term.row + 1).map((l) => l.join("")).join("\n");
+  if (after) el.append("\n" + after);
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function sendInput(s) { rvemu.input(s); updatePending(); }
+function updatePending() { try { $("pending").textContent = JSON.parse(rvemu.state()).uartPending; } catch (e) {} }
+
+$("term").addEventListener("keydown", (e) => {
+  if (e.metaKey || e.altKey) return;
+  let s = null;
+  if (e.key === "Enter") s = "\r";
+  else if (e.key === "Backspace") s = "\x7f";
+  else if (e.ctrlKey && e.key.length === 1) {
+    const k = e.key.toLowerCase();
+    if (k >= "a" && k <= "z") s = String.fromCharCode(k.charCodeAt(0) - 96);
+  } else if (e.key.length === 1) s = e.key;
+  if (s !== null) { e.preventDefault(); sendInput(s); }
+});
+$("term").addEventListener("paste", (e) => {
+  e.preventDefault();
+  sendInput((e.clipboardData.getData("text") || "").replace(/\r?\n/g, "\r"));
+});
+function sendLine() { sendInput($("line").value + "\r"); $("line").value = ""; }
+$("btnSend").onclick = sendLine;
+$("line").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendLine(); } });
+
+// ---- 実行 ----
+function handleResult(r) {
+  if (r.out) { termWrite(r.out); termRender(); }
+  mipsSteps += r.steps;
+  if (r.exited) {
+    setRunning(false);
+    termWrite(`\r\n[マシン停止: 終了コード ${r.code}${r.err ? " / " + r.err : ""}。リセットで再起動]\r\n`);
+    termRender();
+  }
+  return r;
+}
+
+function frame(t) {
+  if (!running) return;
+  const dt = lastT ? Math.min(100, t - lastT) : 16;
+  lastT = t;
+  const speed = $("speed").value;
+  const max = speed === "auto" ? budget : Number(speed);
+  const t0 = performance.now();
+  const r = handleResult(JSON.parse(rvemu.run(max, Math.round(dt * TICKS_PER_MS), untilTrap)));
+  const el = performance.now() - t0;
+  if (r.idle) idleFrames++;
+  // 1 フレームの計算時間が 12ms 程度になるよう命令数を調整する
+  if (speed === "auto" && r.steps >= max && el > 0) budget = Math.max(10000, Math.min(5e6, Math.round(budget * 12 / el)));
+  const now = performance.now();
+  if (now - mipsT > 1000) {
+    $("mips").textContent = (mipsSteps / (now - mipsT) / 1000).toFixed(1) + " MIPS" + (idleFrames > 0 ? " (wfi 待ち)" : "");
+    mipsSteps = 0; mipsT = now; idleFrames = 0;
+  }
+  if (untilTrap && r.trapped) { setRunning(false); refresh(); return; }
+  if (r.exited) { refresh(); return; }
+  if (now - lastRefresh > REFRESH_MS || speed !== "auto") refresh();
+  requestAnimationFrame(frame);
+}
+
+function setRunning(on, trapMode = false) {
+  running = on; untilTrap = on && trapMode;
+  $("btnRun").textContent = on ? "一時停止" : "実行";
+  $("runBadge").textContent = !on ? "停止中" : trapMode ? "トラップまで実行中" : "実行中";
+  for (const id of ["btnStep", "btnStepN"]) $(id).disabled = on;
+  if (on) { lastT = 0; mipsSteps = 0; mipsT = performance.now(); requestAnimationFrame(frame); }
+  else { $("mips").textContent = "0.0 MIPS"; refresh(); }
+}
+
+function stepN(n) {
+  // 1 ステップでも wfi は次のタイマまで早送りする (止まって見えないように)
+  handleResult(JSON.parse(rvemu.run(n, 1e9, false)));
+  refresh();
+}
+
+$("btnRun").onclick = () => setRunning(!running);
+$("btnStep").onclick = () => stepN(1);
+$("btnStepN").onclick = () => stepN(Math.max(1, Math.min(1e7, Number($("stepN").value) || 1)));
+$("btnTrap").onclick = () => setRunning(true, true);
+$("btnReset").onclick = () => {
+  const err = rvemu.reset();
+  if (err) showError(err);
+  term.lines = [[]]; term.row = 0; term.col = 0; termRender();
+  prevState = null; prevMem = null;
+  refresh();
+  setRunning(true);
+};
+
+// ---- 描画 ----
+function cell(id, text, changed, cls = "") {
+  return `<td id="${id}" class="v ${cls}${changed ? " changed" : ""}">${esc(text)}</td>`;
+}
+
+function decodeMstatus(v) {
+  const mpp = Number((v >> 11n) & 3n);
+  return `MIE=${bit(v, 3)} MPIE=${bit(v, 7)} MPP=${"USHM"[mpp]}` + (bit(v, 1) || bit(v, 5) ? ` SIE=${bit(v, 1)} SPIE=${bit(v, 5)}` : "");
+}
+function decodeIrq(v) {
+  const names = [[3, "MSI"], [7, "MTI"], [11, "MEI"], [1, "SSI"], [5, "STI"], [9, "SEI"]];
+  const on = names.filter(([b]) => bit(v, b)).map(([, n]) => n);
+  return on.length ? on.join(" ") : "なし";
+}
+function sym(s) { return s ? ` <span class="sym">&lt;${esc(s)}&gt;</span>` : ""; }
+
+function renderState(st) {
+  const p = prevState;
+  let html = "";
+  for (let i = 0; i < 16; i++) {
+    html += "<tr>";
+    for (const r of [i, i + 16]) {
+      html += `<th>x${r} ${REG_NAMES[r]}</th>` + cell("x" + r, st.x[r], p && p.x[r] !== st.x[r]);
+    }
+    html += "</tr>";
+  }
+  $("regs").innerHTML = html;
+
+  const ch = (k) => p && p[k] !== st[k];
+  const mtime = big(st.mtime), cmp = big(st.mtimecmp);
+  const left = cmp > mtime ? `あと ${(cmp - mtime).toString()} tick` : "割り込み条件成立";
+  $("misc").innerHTML =
+    `<tr><th>pc</th>${cell("pc", st.pc, ch("pc"))}<td class="dec">${sym(st.sym)}</td></tr>` +
+    `<tr><th>特権</th><td class="v${ch("priv") ? " changed" : ""}"><span class="badge priv priv-${st.priv}">${st.priv}</span></td><td class="dec">${PRIV_NAME[st.priv] || ""}</td></tr>` +
+    `<tr><th>instret</th>${cell("instret", st.instret.toLocaleString(), ch("instret"))}<td class="dec">実行した命令数</td></tr>` +
+    `<tr><th>mtime</th>${cell("mtime", st.mtime, ch("mtime"))}<td class="dec">${(Number(mtime) / 1e7).toFixed(2)} 秒</td></tr>` +
+    `<tr><th>mtimecmp</th>${cell("mtimecmp", st.mtimecmp, ch("mtimecmp"))}<td class="dec">${left}</td></tr>`;
+
+  const c = st.csr, pc = p && p.csr;
+  const rows = [
+    ["mstatus", decodeMstatus(big(c.mstatus))],
+    ["mtvec", "トラップの飛び先" + (c.mtvec ? "" : "")],
+    ["mepc", "トラップ元の pc"],
+    ["mcause", big(c.mcause) === 0n && st.trapCount === 0 ? "-" : st.mcauseName],
+    ["mtval", "補足情報"],
+    ["mie", "許可: " + decodeIrq(big(c.mie))],
+    ["mip", "保留: " + decodeIrq(big(c.mip))],
+    ["mscratch", st.priv === "U" ? "今のプロセスの TrapFrame" : "トラップ中は退避した t6"],
+    ["medeleg", "S への委譲 (zigos は 0)"],
+    ["mideleg", ""],
+    ["satp", "ページング (未使用)"],
+  ];
+  $("csrs").innerHTML = rows.map(([n, d]) =>
+    `<tr><th>${n}</th>${cell("c-" + n, c[n], pc && pc[n] !== c[n])}<td class="dec">${esc(d)}</td></tr>`).join("");
+
+  const badge = $("privBadge");
+  badge.textContent = st.priv + " モード";
+  badge.className = "badge priv priv-" + st.priv;
+  badge.title = "現在の特権モード: " + (PRIV_NAME[st.priv] || "");
+  $("instret").textContent = `instret ${st.instret.toLocaleString()} / トラップ ${st.trapCount.toLocaleString()} 回`;
+  $("pending").textContent = st.uartPending;
+}
+
+function renderDisasm(pcHex) {
+  const lines = JSON.parse(rvemu.disasm("", 10, 20));
+  let html = "";
+  for (const l of lines) {
+    if (l.sym) html += `<tr class="sym-row"><td colspan="3">&lt;${esc(l.sym)}&gt;:</td></tr>`;
+    const cur = l.addr === pcHex;
+    html += `<tr${cur ? ' class="current" id="disCur"' : ""}><td>${cur ? "▶ " : "  "}${short(l.addr)}</td><td class="muted">${esc(l.raw)}</td><td>${esc(l.text)}</td></tr>`;
+  }
+  $("disasm").innerHTML = html;
+  const cur = $("disCur"), box = $("disasmBox");
+  if (cur) box.scrollTop = cur.offsetTop - box.clientHeight / 3;
+}
+
+function renderTrace() {
+  const tr = JSON.parse(rvemu.trace()) || [];
+  $("trace").innerHTML = tr.map((t) =>
+    `<tr><td class="muted">${t.seq}</td><td><span class="priv-${t.priv}">${t.priv}</span></td><td>${short(t.pc)}</td><td>${esc(t.text)}</td></tr>`).join("");
+  const box = $("traceBox");
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderTraps() {
+  const traps = JSON.parse(rvemu.traps(60));
+  if (!traps.length) { $("traps").innerHTML = '<tr><td class="muted">まだトラップは起きていません</td></tr>'; return; }
+  let html = "<tr><th>instret</th><th>種類</th><th>原因</th><th>遷移</th><th>pc</th><th>飛び先</th><th>詳細</th></tr>";
+  for (const t of traps) {
+    let detail = "";
+    if (t.ecall) detail = `a7=${t.a7} → ${SYSCALLS[t.a7] ? "<b>" + SYSCALLS[t.a7] + "</b>" : "?"}`;
+    const kindJa = { exception: "例外", interrupt: "割り込み", mret: "mret", sret: "sret", syscall: "syscall" }[t.kind] || t.kind;
+    html += `<tr><td class="muted">${t.seq}</td><td class="kind-${t.kind}">${kindJa}</td><td>${esc(t.causeName || "-")}</td>` +
+      `<td><span class="priv-${t.from}">${t.from}</span>→<span class="priv-${t.to}">${t.to}</span></td>` +
+      `<td>${short(t.pc)}${sym(t.pcSym)}</td><td>${short(t.target)}${sym(t.targetSym)}</td><td>${detail}</td></tr>`;
+  }
+  $("traps").innerHTML = html;
+}
+
+function renderMem() {
+  const r = JSON.parse(rvemu.mem(memAddr, 256));
+  if (r.error) { $("mem").innerHTML = `<tr><td class="err">${esc(r.error)}</td></tr>`; return; }
+  const bytes = r.hex.match(/../g) || [];
+  const base = big(r.addr);
+  const same = prevMem && prevMem.addr === r.addr;
+  let html = "";
+  if (!bytes.length) html = '<tr><td class="muted">このアドレスには何もありません (RAM: 0x80000000〜, UART: 0x10000000, CLINT: 0x02000000)</td></tr>';
+  for (let row = 0; row < bytes.length; row += 16) {
+    const a = (base + BigInt(row)).toString(16).padStart(16, "0");
+    html += `<tr><td class="muted">${short(a)}</td>`;
+    let ascii = "";
+    for (let i = row; i < row + 16; i++) {
+      const b = bytes[i];
+      if (b === undefined) { html += "<td class=\"b\"></td>"; continue; }
+      const changed = same && prevMem.bytes[i] !== undefined && prevMem.bytes[i] !== b;
+      html += `<td class="b${changed ? " changed" : ""}">${b}</td>`;
+      const n = parseInt(b, 16);
+      ascii += n >= 0x20 && n < 0x7f ? String.fromCharCode(n) : ".";
+    }
+    html += `<td class="ascii">${esc(ascii)}</td></tr>`;
+  }
+  $("mem").innerHTML = html;
+  prevMem = { addr: r.addr, bytes };
+}
+
+function refresh() {
+  lastRefresh = performance.now();
+  const st = JSON.parse(rvemu.state());
+  renderState(st);
+  renderDisasm(st.pc);
+  renderTrace();
+  renderTraps();
+  renderMem();
+  prevState = st;
+}
+
+function gotoMem(v) {
+  const st = prevState || JSON.parse(rvemu.state());
+  if (v === "sp") v = "0x" + st.x[2];
+  else if (v === "mscratch") v = "0x" + st.csr.mscratch;
+  memAddr = v; $("memAddr").value = v; prevMem = null;
+  renderMem();
+}
+$("btnMem").onclick = () => gotoMem($("memAddr").value);
+$("memAddr").addEventListener("keydown", (e) => { if (e.key === "Enter") gotoMem($("memAddr").value); });
+for (const b of document.querySelectorAll("[data-mem]")) b.onclick = () => gotoMem(b.dataset.mem);
+
+// ---- 起動 ----
+async function main() {
+  try {
+    const go = new Go();
+    const [wasm, kernel] = await Promise.all([
+      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject),
+      fetch("kernel.elf").then((r) => { if (!r.ok) throw new Error("kernel.elf が読めません (build.sh を実行してください): " + r.status); return r.arrayBuffer(); }),
+    ]);
+    go.run(wasm.instance);
+    const err = rvemu.load(new Uint8Array(kernel), RAM_MIB);
+    if (err) throw new Error(err);
+    $("loading").hidden = true;
+    $("app").hidden = false;
+    termRender();
+    refresh();
+    setRunning(true);
+    $("term").focus();
+  } catch (e) {
+    $("loading").hidden = true;
+    showError(String(e && e.stack || e));
+  }
+}
+main();
+</script>
+</body>
+</html>

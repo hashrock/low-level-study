@@ -2,6 +2,8 @@
 //
 //	rvemu run  [flags] prog.elf [args...]   Linux 静的 ELF をユーザモードで実行
 //	rvemu boot [flags] kernel.elf           QEMU virt 相当のマシンでカーネルを起動
+//
+// エミュレータ本体は rvemu/rv パッケージ (このファイルは CLI だけ)。
 package main
 
 import (
@@ -10,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"rvemu/rv"
 )
 
 func usage() {
@@ -35,6 +39,10 @@ func main() {
 	if fs.NArg() < 1 {
 		usage()
 	}
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		fatal(err)
+	}
 
 	// トレースは大量に出るのでバッファする
 	var traceOut *bufio.Writer
@@ -43,34 +51,34 @@ func main() {
 		defer traceOut.Flush()
 	}
 
-	var cpu *CPU
+	var m *rv.Machine
 	switch cmd {
 	case "run":
-		proc := &Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Verbose: *verbose}
-		c, err := NewUserMachine(fs.Arg(0), fs.Args()[1:], proc)
+		m, err = rv.NewUserMachine(data, fs.Args(), os.Stdout, os.Stdin)
 		if err != nil {
-			fatal(err)
+			fatal(fmt.Errorf("%s: %w", fs.Arg(0), err))
 		}
-		cpu = c
+		m.Proc.Stderr = os.Stderr
+		m.Proc.Verbose = *verbose
 	case "boot":
-		sys, err := NewSystem(fs.Arg(0), os.Stdin, os.Stdout)
+		m, err = rv.NewVirtMachine(data, os.Stdout, os.Stdin, nil)
 		if err != nil {
-			fatal(err)
+			fatal(fmt.Errorf("%s: %w", fs.Arg(0), err))
 		}
-		cpu = sys.CPU
 		if *realtime {
 			// mtime は 10MHz 相当: 1 tick = 100ns
-			cpu.IdleHook = func(ticks uint64) { time.Sleep(time.Duration(min(ticks, 100_000)) * 100) }
+			m.CPU.IdleHook = func(ticks uint64) { time.Sleep(time.Duration(min(ticks, 100_000)) * 100) }
 		}
 	default:
 		usage()
 	}
+	cpu := m.CPU
 	if traceOut != nil {
 		cpu.Trace = traceOut
 	}
 
 	start := time.Now()
-	err := Run(cpu, *maxInsts, *timeout)
+	err = run(m, *maxInsts, *timeout)
 	elapsed := time.Since(start)
 	if traceOut != nil {
 		traceOut.Flush()
@@ -88,6 +96,22 @@ func main() {
 		}
 	}
 	os.Exit(cpu.ExitCode)
+}
+
+// run は止まるまで (または上限に達するまで) 実行する。時刻チェックは重いので 64K 命令ごと。
+func run(m *rv.Machine, maxSteps uint64, timeout time.Duration) error {
+	start := time.Now()
+	for {
+		if exited, _, err := m.Run(1 << 16); exited {
+			return err
+		}
+		if maxSteps > 0 && m.CPU.Steps >= maxSteps {
+			return rv.ErrStepLimit
+		}
+		if timeout > 0 && time.Since(start) > timeout {
+			return fmt.Errorf("timeout")
+		}
+	}
 }
 
 func fatal(err error) {

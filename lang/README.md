@@ -78,16 +78,22 @@ print(arr[0], m.name)
          lexer.go         parser.go/ast.go  compiler.go     opcode.go            vm.go
 ```
 
+コア (字句解析〜VM) は `minilang/` パッケージ (import path `minilang/minilang`)。ルートの `main.go` は CLI/REPL だけ。
+
 | ファイル | 役割 |
 |---|---|
-| `lexer.go` | 文字列 → トークン列。位置 (行:列) と共通エラー型 `LangError` |
-| `ast.go` | AST ノード定義 |
-| `parser.go` | Pratt パーサ。中置演算子ごとに優先順位を持ち、`expr(prec)` が再帰する |
-| `compiler.go` | AST → バイトコード。変数をローカル/捕捉変数/グローバルに解決し、ジャンプ先をパッチする |
-| `opcode.go` | 命令セット、`Proto` (関数 1 個分のコード)、逆アセンブラ |
-| `value.go` | 実行時の値の型と表示 |
-| `vm.go` | スタックマシン本体 (命令ディスパッチ、関数呼び出し、演算) |
-| `builtins.go` | 組み込み関数 |
+| `minilang/lexer.go` | 文字列 → トークン列。位置 (行:列) と共通エラー型 `LangError` |
+| `minilang/ast.go` | AST ノード定義 |
+| `minilang/parser.go` | Pratt パーサ。中置演算子ごとに優先順位を持ち、`expr(prec)` が再帰する |
+| `minilang/compiler.go` | AST → バイトコード。変数をローカル/捕捉変数/グローバルに解決し、ジャンプ先をパッチする |
+| `minilang/opcode.go` | 命令セット、`Proto` (関数 1 個分のコード)、逆アセンブラ |
+| `minilang/value.go` | 実行時の値の型と表示 |
+| `minilang/vm.go` | スタックマシン本体 (命令ディスパッチ、関数呼び出し、演算) |
+| `minilang/builtins.go` | 組み込み関数 |
+| `minilang/debug.go` | ステップ実行 API (`Start` `Step` `RunFor` `StepOver` `StepOut`) と状態のスナップショット |
+| `minilang/session.go` | ブラウザ版用のセッション (コンパイル + VM + 出力バッファ + 逆アセンブル) |
+| `examples/examples.go` | サンプルを `go:embed` で埋め込むパッケージ |
+| `cmd/wasm/` | ブラウザ版 (web/lang/) の wasm エントリ。`web/lang/build.sh` でビルド |
 | `main.go` | ファイル実行と REPL |
 
 ### 変数とクロージャの仕組み

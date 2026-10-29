@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minidb 内部ビュー</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .wide { grid-column: 1 / -1; }
+  #app.grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+  header.top .spacer { flex: 1; }
+  header.top .hdr-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  #sql { min-height: 96px; }
+  .console-out { max-height: 340px; overflow: auto; margin-top: 8px; }
+  .res { margin-bottom: 10px; }
+  .res .msg { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .sqlecho { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: pre-wrap; word-break: break-all; }
+  .tablewrap { overflow: auto; max-width: 100%; }
+  table.result { border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.result th, table.result td { border: 1px solid var(--border); padding: 1px 6px; text-align: left; white-space: nowrap; }
+  table.result th { background: var(--panel-2); color: var(--muted); font-weight: normal; }
+  table.result td.null { color: var(--muted); font-style: italic; }
+  .history { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow: auto; margin-top: 6px; }
+  .history button { text-align: left; font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; background: transparent; border-color: transparent; color: var(--muted); }
+  .history button:hover { color: var(--text); border-color: var(--border); }
+  label.inline { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  input[type=number] { width: 72px; }
+  .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+  h3 { font-size: 13px; margin: 12px 0 4px; }
+
+  /* やってみよう */
+  .notes ol { margin: 0; padding-left: 20px; }
+  .notes li { margin-bottom: 8px; }
+  .notes li p { margin: 2px 0 4px; }
+  .notes button { font-size: 12px; padding: 1px 8px; margin: 2px 2px 0 0; }
+  .notes code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+
+  /* B+tree */
+  .treewrap { overflow: auto; max-height: 520px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+  .treewrap svg { display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); align-items: center; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 3px; border: 1.5px solid var(--border); background: var(--panel); }
+  .sw.dirty { background: var(--hl); }
+  .sw.new { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 22%, var(--panel)); }
+  .sw.read { border-color: var(--accent); border-style: dashed; }
+  .sw.sel { border-color: var(--accent); background: var(--accent-soft); }
+  g.node { cursor: pointer; }
+  g.node .box { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+  g.node.internal .box { stroke: var(--muted); }
+  g.node.read .box { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.6; }
+  g.node.dirty .box { fill: var(--hl); }
+  g.node.dirty { animation: pulse .9s ease-out 1; }
+  g.node.new .box { stroke: var(--ok); stroke-width: 2.4; stroke-dasharray: none; fill: color-mix(in srgb, var(--ok) 20%, var(--panel)); }
+  g.node.new { animation: appear .6s ease-out 1; }
+  g.node.sel .box { stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: none; }
+  g.node:hover .box { stroke: var(--accent); }
+  g.node text { fill: var(--text); font-family: var(--mono); font-size: 11px; }
+  g.node text.dim { fill: var(--muted); font-size: 10px; }
+  g.node .bar-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: .5; }
+  g.node .bar { fill: var(--c2); }
+  g.node .bar.full { fill: var(--c3); }
+  .edge { fill: none; stroke: var(--muted); stroke-width: 1; opacity: .7; }
+  .nextp { fill: none; stroke: var(--c4); stroke-width: 1.2; }
+  .arrowhead { fill: var(--c4); }
+  @keyframes pulse { 0% { opacity: .35; } 100% { opacity: 1; } }
+  @keyframes appear { 0% { opacity: 0; transform: translateY(-10px); } 100% { opacity: 1; transform: none; } }
+  .empty-msg { color: var(--muted); padding: 24px; text-align: center; }
+
+  /* ページインスペクタ */
+  .hex { font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; }
+  .hexwrap { overflow: auto; max-height: 460px; border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 6px; background: var(--bg); }
+  .hex .off { color: var(--muted); user-select: none; }
+  .hex .b, .hex .a { cursor: default; border-radius: 2px; }
+  .hex .z { color: var(--muted); opacity: .45; }
+  .hex .sel { outline: 1.5px solid var(--accent); outline-offset: -1px; }
+  .hex .chg { box-shadow: inset 0 -2px 0 var(--err); }
+  .hex .collapsed { color: var(--muted); font-style: italic; }
+  .hex .collapsed button { font-size: 11px; padding: 0 6px; }
+  .k-type { background: color-mix(in srgb, var(--c5) 32%, transparent); }
+  .k-count, .k-ncols { background: color-mix(in srgb, var(--c3) 32%, transparent); }
+  .k-next, .k-child, .k-root { background: color-mix(in srgb, var(--c4) 30%, transparent); }
+  .k-key, .k-name { background: color-mix(in srgb, var(--c1) 30%, transparent); }
+  .k-vlen, .k-coltype { background: color-mix(in srgb, var(--c6) 30%, transparent); }
+  .k-value, .k-colname { background: color-mix(in srgb, var(--c2) 26%, transparent); }
+  .k-value.alt, .k-colname.alt { background: color-mix(in srgb, var(--c2) 12%, transparent); }
+  .k-magic { background: color-mix(in srgb, var(--c5) 22%, transparent); }
+  .hexinfo { font-family: var(--mono); font-size: 12px; min-height: 1.5em; color: var(--muted); margin: 4px 0; }
+  table.cells { border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.cells th, table.cells td { padding: 1px 6px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  table.cells th { color: var(--muted); font-weight: normal; }
+  table.cells tr { cursor: pointer; }
+  table.cells tr:hover td { background: var(--panel-2); }
+  table.cells tr.current td { background: var(--accent-soft); }
+  .cellswrap { overflow: auto; max-height: 300px; margin-top: 8px; }
+  .lg { font-size: 11.5px; padding: 0 6px; border-radius: 4px; font-family: var(--mono); }
+
+  /* キャッシュ・統計 */
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .chip { font-family: var(--mono); font-size: 11.5px; padding: 0 6px; border: 1.5px solid var(--border); border-radius: 4px; background: var(--panel-2); cursor: pointer; }
+  .chip.read { border-color: var(--accent); }
+  .chip.dirty { background: var(--hl); }
+  .chip.new { border-color: var(--ok); }
+  .chip.isdirty::after { content: "*"; color: var(--err); }
+  .lru-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .stmt { border-top: 1px solid var(--border); padding: 6px 0; }
+  .stmt code { display: block; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--accent); }
+  .badge.pk { border-color: var(--ok); color: var(--ok); }
+  .badge.scan { border-color: var(--warn); color: var(--warn); }
+  .badge.ins { border-color: var(--c4); color: var(--c4); }
+  .badge.split { border-color: var(--err); color: var(--err); }
+  .statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0 10px; font-size: 12px; margin-top: 4px; }
+  .statgrid div { display: flex; justify-content: space-between; border-bottom: 1px dotted var(--border); }
+  .statgrid span:last-child { font-family: var(--mono); }
+  table.kv td.num { text-align: right; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>minidb — B+tree とページャを覗く</h1>
+  <span class="spacer"></span>
+  <span class="hdr-actions">
+    <button id="btn-save" title="DB ファイルをダウンロード (CLI の go run . で開けます)">.db を保存</button>
+    <button id="btn-load" title=".db ファイルを読み込む">.db を読込</button>
+    <input type="file" id="file" accept=".db,application/octet-stream" hidden>
+    <button id="btn-reset" title="空の DB に戻す">リセット</button>
+  </span>
+</header>
+<main>
+  <div id="loading" class="loading">wasm を読み込み中…</div>
+  <div id="fatal" class="err" hidden></div>
+  <div id="app" class="grid" hidden>
+
+    <section class="panel">
+      <h2>SQL コンソール</h2>
+      <div class="toolbar">
+        <select id="preset" aria-label="プリセット">
+          <option value="">プリセットを読み込む…</option>
+          <option value="create">テーブル作成 (users, posts)</option>
+          <option value="sample">サンプル行を挿入</option>
+          <option value="join">JOIN の例</option>
+          <option value="pk">主キー検索 (WHERE id = 5)</option>
+          <option value="scan">全件スキャン (WHERE name = 'x')</option>
+          <option value="update">UPDATE / DELETE の例</option>
+        </select>
+        <button id="btn-run" class="primary" title="Ctrl/⌘ + Enter">実行</button>
+      </div>
+      <textarea id="sql" spellcheck="false" aria-label="SQL">CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER);</textarea>
+      <div class="toolbar" style="margin-top:6px">
+        <label class="inline">ランダムに <input type="number" id="bulk-n" value="200" min="1" max="5000" aria-label="行数"> 行</label>
+        <label class="inline">→ <select id="bulk-table" aria-label="挿入先テーブル"></select></label>
+        <label class="inline">文字列 <select id="bulk-len" aria-label="文字列の長さ">
+          <option value="8">短い (8)</option>
+          <option value="40" selected>中 (40)</option>
+          <option value="160">長い (160)</option>
+        </select></label>
+        <label class="inline"><input type="checkbox" id="bulk-anim"> 1 行ずつ</label>
+        <button id="btn-bulk">挿入</button>
+      </div>
+      <div class="muted" style="font-size:12px">履歴 (クリックで入力欄へ)</div>
+      <div id="history" class="history"></div>
+      <div id="out" class="console-out"></div>
+    </section>
+
+    <section class="panel notes">
+      <h2>やってみよう</h2>
+      <ol>
+        <li><b>ルートが分割される瞬間</b>
+          <p>空のテーブルを作り、長い行を 1 行ずつ入れていきます。葉 (= 1 ページ) が 4096 バイトを超えると分割され、
+          <b>ルートのページが内部ノードに変わり、元の中身は新しいページ (緑) に移ります</b>。ルートのページ ID は変わらないのでカタログを書き換えずに済みます (ページ 0 で確認できます)。</p>
+          <button data-do="mk-t">テーブル t を作る</button><button data-do="one-long">長い行を 1 行挿入</button><button data-do="until-split">分割するまで挿入</button>
+        </li>
+        <li><b>たくさん入れる</b>
+          <p>users にランダムな主キーで 200 行。葉が増え、葉どうしが <code>next</code> (紫の矢印) でつながります。バーは使用バイト数。</p>
+          <button data-do="mk-users">users を作る</button><button data-do="bulk200">200 行挿入</button>
+        </li>
+        <li><b>主キー検索 vs 全件スキャン</b>
+          <p><code>WHERE id = 5</code> はルートから葉まで 2 ページ (深さ分) だけ読みます。<code>WHERE name = 'x'</code> は全部の葉を next で辿り、全行をデコードします。
+          「ステートメント統計」の <b>読んだ行</b> と <b>触ったページ</b>、木の青い点線 (読んだページ) を比べてください。</p>
+          <button data-do="q-pk">WHERE id = 5</button><button data-do="q-scan">WHERE name = 'x'</button>
+        </li>
+        <li><b>キャッシュが小さいと</b>
+          <p>キャッシュ容量を 4 ページにしてから全件スキャンすると、毎回ファイルから読み直し (ディスク読込)、古いページが追い出されます。</p>
+          <button data-do="cap4">容量 4 にする</button><button data-do="q-scan">全件スキャン</button><button data-do="cap64">容量 64 に戻す</button>
+        </li>
+        <li><b>消しても縮まない</b>
+          <p>DELETE は葉からキーを消すだけで、併合もページの再利用もしません。空きバイト (バーの残り) が増えるだけです。</p>
+          <button data-do="del">DELETE FROM users WHERE id &lt; 300</button>
+        </li>
+        <li><b>ファイルとして持ち出す</b>
+          <p>右上の「.db を保存」でダウンロードしたファイルは CLI でそのまま開けます: <code>cd db &amp;&amp; go run . minidb.db</code>。逆に CLI で作ったファイルも読み込めます。</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="panel wide">
+      <h2>B+tree</h2>
+      <div class="toolbar">
+        <label class="inline">テーブル <select id="tree-table" aria-label="表示するテーブル"></select></label>
+        <button id="btn-cat" title="ページ 0 (カタログ) を表示">ページ 0 (カタログ)</button>
+        <span id="tree-sum" class="muted mono" style="font-size:12px"></span>
+      </div>
+      <div class="legend" style="margin-bottom:6px">
+        <span><span class="sw dirty"></span>直前の文で変更</span>
+        <span><span class="sw new"></span>新しいページ (分割)</span>
+        <span><span class="sw read"></span>読んだだけ</span>
+        <span><span class="sw sel"></span>インスペクタで表示中</span>
+        <span>ノードをクリック → ページの中身</span>
+      </div>
+      <div id="tree" class="treewrap"></div>
+    </section>
+
+    <section class="panel">
+      <h2>ページインスペクタ</h2>
+      <div class="toolbar">
+        <button id="pg-prev" aria-label="前のページ">◀</button>
+        <label class="inline">page <input type="number" id="pg-id" value="0" min="0" aria-label="ページ番号"></label>
+        <button id="pg-next" aria-label="次のページ">▶</button>
+        <span id="pg-title" class="mono" style="font-size:12px"></span>
+      </div>
+      <div id="pg-legend" class="legend"></div>
+      <div id="hexinfo" class="hexinfo">バイトにマウスを乗せると意味が出ます</div>
+      <div class="hexwrap"><div id="hex" class="hex"></div></div>
+      <div class="cellswrap"><table id="cells" class="cells"></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>ページャ / キャッシュ</h2>
+      <div class="toolbar">
+        <label class="inline">キャッシュ容量
+          <select id="cap" aria-label="キャッシュ容量">
+            <option>64</option><option>16</option><option>8</option><option>4</option><option>2</option>
+          </select> ページ</label>
+      </div>
+      <table class="kv" id="counters"></table>
+      <h3>キャッシュ中のページ (LRU 順)</h3>
+      <div class="lru-axis"><span>← 最近使った</span><span>次に追い出される →</span></div>
+      <div id="lru" class="chips"></div>
+      <div class="muted" style="font-size:12px">各文の最後に dirty ページを全部書き出す (flush) ので、表示時点の dirty (*) は通常 0。黄色 = 直前の文で dirty になって書き出されたページ。</div>
+
+      <h3>ステートメント統計 (直前の実行)</h3>
+      <div id="stmts"></div>
+      <h3>比較用の履歴</h3>
+      <div class="tablewrap"><table class="kv" id="cmp"></table></div>
+    </section>
+  </div>
+</main>
+
+<script src="../shared/wasm_exec.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const PRESETS = {
+  create: "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER);\nCREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT);",
+  sample: "INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 25), (3, 'carol', 41);\nINSERT INTO users (name, age) VALUES ('dave', 19);\nINSERT INTO posts VALUES (10, 1, 'Hello'), (11, 3, 'B-tree入門'), (12, 1, 'Pager');",
+  join: "SELECT users.name, posts.title FROM posts JOIN users ON posts.user_id = users.id ORDER BY posts.id LIMIT 20;",
+  pk: "SELECT * FROM users WHERE id = 5;",
+  scan: "SELECT * FROM users WHERE name = 'x';",
+  update: "UPDATE users SET age = 99 WHERE id = 2;\nDELETE FROM users WHERE age < 20;\nSELECT * FROM users ORDER BY age DESC LIMIT 5;",
+};
+
+const st = {
+  table: null,        // B+tree に表示中のテーブル
+  page: 0,            // インスペクタで表示中のページ
+  pageData: null,     // 直前に表示したページのバイト列 (差分表示用)
+  pageDataId: -1,
+  selCell: -1,
+  showAll: false,     // ゼロ領域を畳まない
+  hl: { touched: new Set(), dirtied: new Set(), alloc: new Set() },
+  lastStats: [],
+  cmp: [],            // 比較用履歴
+  prevCounters: null,
+  history: [],
+  busy: false,
+};
+
+function call(name, ...args) {
+  const r = JSON.parse(minidb[name](...args));
+  return r;
+}
+
+// ---------- 実行 ----------
+
+function exec(sql, opts = {}) {
+  const out = call("exec", sql);
+  if (!opts.silent) {
+    pushHistory(sql);
+    showOutput(opts.label || sql, out);
+  }
+  afterExec(out.stats || [], opts);
+  return out;
+}
+
+function afterExec(stats, opts = {}) {
+  st.lastStats = opts.accumulate ? st.lastStats.concat(stats) : stats;
+  const hl = { touched: new Set(), dirtied: new Set(), alloc: new Set() };
+  for (const s of st.lastStats) {
+    s.touched.forEach((p) => hl.touched.add(p));
+    s.dirtied.forEach((p) => hl.dirtied.add(p));
+    s.allocated.forEach((p) => hl.alloc.add(p));
+  }
+  st.hl = hl;
+  for (const s of stats) {
+    st.cmp.push(s);
+    if (st.cmp.length > 12) st.cmp.shift();
+  }
+  // 直前の文が触ったテーブルを表示する
+  const last = stats[stats.length - 1];
+  if (last && last.access.length) st.table = last.access[last.access.length - 1].table;
+  else if (last && last.kind === "CREATE") {
+    const m = /create\s+table\s+(\w+)/i.exec(last.sql);
+    if (m) st.table = m[1].toLowerCase();
+  }
+  refresh();
+}
+
+function refresh() {
+  renderTables();
+  renderTree();
+  renderCache();
+  renderStats();
+  renderPage();
+}
+
+function showOutput(sql, out) {
+  const parts = [`<div class="sqlecho">${esc(sql.length > 400 ? sql.slice(0, 400) + " …" : sql)}</div>`];
+  for (const r of out.results) {
+    let h = "";
+    if (r.columns) {
+      const rows = r.rows || [];
+      const shown = rows.slice(0, 200);
+      h += `<div class="tablewrap"><table class="result"><tr>${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+      shown.forEach((row, i) => {
+        h += "<tr>" + row.map((v, j) => (r.nulls[i][j] ? `<td class="null">NULL</td>` : `<td>${esc(v)}</td>`)).join("") + "</tr>";
+      });
+      h += "</table></div>";
+      if (rows.length > shown.length) h += `<div class="msg">… 先頭 ${shown.length} 行のみ表示</div>`;
+    }
+    h += `<div class="msg">${esc(r.message)}</div>`;
+    parts.push(`<div class="res">${h}</div>`);
+  }
+  if (out.error) parts.push(`<div class="err mono">Error: ${esc(out.error)}</div>`);
+  $("out").innerHTML = parts.join("");
+}
+
+function pushHistory(sql) {
+  st.history = st.history.filter((h) => h !== sql);
+  st.history.unshift(sql);
+  st.history = st.history.slice(0, 30);
+  try { localStorage.setItem("minidb-history", JSON.stringify(st.history)); } catch (e) {}
+  renderHistory();
+}
+
+function renderHistory() {
+  $("history").innerHTML = st.history
+    .map((h, i) => `<button data-h="${i}" title="${esc(h.slice(0, 300))}">${esc(h.replace(/\s+/g, " ").slice(0, 120))}</button>`)
+    .join("") || `<span class="muted" style="font-size:12px">(まだありません)</span>`;
+}
+
+// ---------- ランダム挿入 ----------
+
+const SYL = ["ka", "ri", "no", "sa", "to", "mi", "ne", "ko", "yu", "ha", "ru", "chi", "ta", "ma", "shi", "ro", "e", "a"];
+function randWord(len) {
+  let s = "";
+  while (s.length < len) s += SYL[(Math.random() * SYL.length) | 0];
+  return s.slice(0, len);
+}
+function treeKeys(table) {
+  const t = call("tree", table);
+  const keys = [];
+  if (t.error) return keys;
+  (function walk(n) {
+    if (n.type === "leaf") keys.push(...n.keys);
+    (n.children || []).forEach(walk);
+  })(t);
+  return keys;
+}
+// n 行分の VALUES タプルを作る (主キーは既存と重ならないランダム値)
+function randomTuples(table, n, textLen) {
+  const info = call("tables").find((t) => t.name === table);
+  if (!info) throw new Error("no such table: " + table);
+  const used = new Set(treeKeys(table));
+  const range = Math.max(1000, (used.size + n) * 5);
+  const fk = {};
+  const tuples = [];
+  for (let i = 0; i < n; i++) {
+    const vals = info.columns.map((c) => {
+      if (c.pk) {
+        let k;
+        do { k = 1 + ((Math.random() * range) | 0); } while (used.has(k));
+        used.add(k);
+        return String(k);
+      }
+      if (c.type === "INTEGER") {
+        const m = /^(\w+)_id$/.exec(c.name);
+        if (m) {
+          const target = m[1] + "s";
+          if (!(target in fk)) fk[target] = treeKeys(target);
+          if (fk[target].length) return String(fk[target][(Math.random() * fk[target].length) | 0]);
+        }
+        return String((Math.random() * 100) | 0);
+      }
+      const L = Math.max(1, Math.round(textLen * (0.6 + Math.random() * 0.8)));
+      return `'${randWord(L)}'`;
+    });
+    tuples.push(`(${vals.join(", ")})`);
+  }
+  return tuples;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function bulkInsert(table, n, textLen, animate) {
+  if (st.busy) return;
+  if (!table) { showError("テーブルがありません。先に CREATE TABLE してください。"); return; }
+  setBusy(true);
+  try {
+    const tuples = randomTuples(table, n, textLen);
+    const label = `-- ランダムに ${n} 行${animate ? " (1 行ずつ)" : ""}\nINSERT INTO ${table} VALUES ${tuples.slice(0, 3).join(", ")}${n > 3 ? ", …" : ""};`;
+    if (!animate) {
+      exec(`INSERT INTO ${table} VALUES ${tuples.join(", ")};`, { label });
+    } else {
+      let first = true, last = null;
+      for (const tp of tuples) {
+        last = call("exec", `INSERT INTO ${table} VALUES ${tp};`);
+        afterExec(last.stats, { accumulate: !first });
+        first = false;
+        if (last.error) break;
+        await sleep(n > 100 ? 15 : 60);
+      }
+      showOutput(label, { results: [{ message: `INSERT ${tuples.length} (1 行ずつ)` }], error: last && last.error });
+    }
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setBusy(b) {
+  st.busy = b;
+  document.querySelectorAll("button").forEach((x) => { if (!x.closest(".history")) x.disabled = b; });
+}
+function showError(msg) {
+  $("out").innerHTML = `<div class="err mono">Error: ${esc(msg)}</div>`;
+}
+
+// ---------- テーブル一覧 ----------
+
+function renderTables() {
+  const tables = call("tables");
+  if (!tables.find((t) => t.name === st.table)) st.table = tables.length ? tables[0].name : null;
+  for (const id of ["tree-table", "bulk-table"]) {
+    const sel = $(id);
+    const keep = id === "tree-table" ? st.table : sel.value || st.table;
+    sel.innerHTML = tables.map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (root p${t.root})</option>`).join("") || `<option value="">(なし)</option>`;
+    if (tables.find((t) => t.name === keep)) sel.value = keep;
+  }
+}
+
+// ---------- B+tree の描画 ----------
+
+const LEVEL_H = 86, GAP = 12, PAD = 14;
+
+function keyLabel(keys, max) {
+  if (keys.length <= max) return keys.map(String);
+  const h = Math.floor((max - 1) / 2);
+  return [...keys.slice(0, h).map(String), `…${keys.length - 2 * h}…`, ...keys.slice(-h).map(String)];
+}
+
+function renderTree() {
+  const box = $("tree");
+  if (!st.table) {
+    box.innerHTML = `<div class="empty-msg">テーブルがありません。CREATE TABLE を実行してください。</div>`;
+    $("tree-sum").textContent = "";
+    return;
+  }
+  const root = call("tree", st.table);
+  if (root.error) { box.innerHTML = `<div class="err">${esc(root.error)}</div>`; return; }
+
+  // 統計と葉の数
+  let leaves = [], internals = 0, rows = 0, depth = 0;
+  (function walk(n, d) {
+    depth = Math.max(depth, d + 1);
+    if (n.type === "leaf") { leaves.push(n); rows += n.keys.length; }
+    else { internals++; n.children.forEach((c) => walk(c, d + 1)); }
+  })(root, 0);
+  const compact = leaves.length > 36;
+  const LEAF_W = compact ? 62 : 96;
+  $("tree-sum").textContent = `深さ ${depth} ・ 葉 ${leaves.length} ・ 内部 ${internals} ・ ${rows} 行 ・ ルート p${root.page}`;
+
+  // 幅の計算 (下から)
+  (function measure(n) {
+    if (n.type === "leaf") { n._w = LEAF_W; n._sw = LEAF_W; return; }
+    n._labels = keyLabel(n.keys, compact ? 7 : 11);
+    const tw = n._labels.reduce((a, s) => a + s.length * 6.7 + 12, 0);
+    n._w = Math.max(compact ? 112 : 122, tw + 14);
+    n.children.forEach(measure);
+    const cw = n.children.reduce((a, c) => a + c._sw, 0) + GAP * (n.children.length - 1);
+    n._sw = Math.max(n._w, cw);
+  })(root);
+  // 配置
+  (function place(n, x0, d) {
+    n._y = PAD + d * LEVEL_H;
+    if (n.type === "leaf") { n._x = x0 + (n._sw - n._w) / 2; return; }
+    const cw = n.children.reduce((a, c) => a + c._sw, 0) + GAP * (n.children.length - 1);
+    let x = x0 + (n._sw - cw) / 2;
+    for (const c of n.children) { place(c, x, d + 1); x += c._sw + GAP; }
+    const f = n.children[0], l = n.children[n.children.length - 1];
+    const center = (f._x + f._w / 2 + l._x + l._w / 2) / 2;
+    n._x = Math.min(Math.max(center - n._w / 2, x0), x0 + n._sw - n._w);
+  })(root, PAD, 0);
+
+  const W = root._sw + PAD * 2, H = PAD * 2 + (depth - 1) * LEVEL_H + 50;
+  const parts = [];
+  const nodes = [];
+  // 枝
+  (function edges(n) {
+    nodes.push(n);
+    if (n.type === "leaf") return;
+    const k = n.children.length;
+    n.children.forEach((c, i) => {
+      const sx = k === 1 ? n._x + n._w / 2 : n._x + 8 + (i * (n._w - 16)) / (k - 1);
+      const sy = n._y + 40, ex = c._x + c._w / 2, ey = c._y;
+      const my = (sy + ey) / 2;
+      parts.push(`<path class="edge" d="M${sx},${sy} C${sx},${my} ${ex},${my} ${ex},${ey}"/>`);
+      edges(c);
+    });
+  })(root);
+  // 葉の next ポインタ
+  const byPage = new Map(leaves.map((l) => [l.page, l]));
+  leaves.forEach((l, i) => {
+    if (!l.next) return;
+    const t = byPage.get(l.next);
+    if (!t) return;
+    const y = l._y + 23;
+    if (leaves[i + 1] === t) {
+      parts.push(`<path class="nextp" d="M${l._x + l._w},${y} L${t._x - 2},${y}" marker-end="url(#ah)"/>`);
+    } else {
+      const yb = l._y + 56;
+      parts.push(`<path class="nextp" stroke-dasharray="3 3" d="M${l._x + l._w / 2},${l._y + 48} C${l._x + l._w / 2},${yb + 20} ${t._x + t._w / 2},${yb + 20} ${t._x + t._w / 2},${t._y + 50}" marker-end="url(#ah)"/>`);
+    }
+  });
+  // ノード
+  for (const n of nodes) {
+    const cls = ["node", n.type];
+    if (st.hl.alloc.has(n.page)) cls.push("new");
+    else if (st.hl.dirtied.has(n.page)) cls.push("dirty");
+    else if (st.hl.touched.has(n.page)) cls.push("read");
+    if (n.page === st.page) cls.push("sel");
+    const h = n.type === "leaf" ? 48 : 46;
+    const fill = Math.min(1, n.used / 4096);
+    const bw = n._w - 12;
+    // 位置は外側の g、アニメーション (CSS transform) は内側の g に付ける
+    let g = `<g transform="translate(${n._x},${n._y})"><g class="${cls.join(" ")}" data-page="${n.page}">`;
+    g += `<title>page ${n.page} (${n.type === "leaf" ? "葉" : "内部"}) キー ${n.keys.length} 個, 使用 ${n.used} / 空き ${n.free} バイト${n.type === "leaf" && n.next ? ", next → p" + n.next : ""}</title>`;
+    g += `<rect class="box" width="${n._w}" height="${h}" rx="5"/>`;
+    if (n.type === "leaf") {
+      const range = n.keys.length ? (compact ? `${n.keys.length}` : `${n.keys[0]}–${n.keys[n.keys.length - 1]}`) : "(空)";
+      g += `<text class="dim" x="6" y="13">p${n.page}${compact ? "" : " · " + n.keys.length + " 行"}</text>`;
+      g += `<text x="6" y="28">${esc(range)}</text>`;
+    } else {
+      g += `<text class="dim" x="6" y="13">p${n.page} 内部 · ${n.keys.length} キー</text>`;
+      let x = 7;
+      n._labels.forEach((s, i) => {
+        if (i > 0) g += `<text class="dim" x="${x - 7}" y="29">│</text>`;
+        g += `<text x="${x}" y="29">${esc(s)}</text>`;
+        x += s.length * 6.7 + 12;
+      });
+    }
+    g += `<rect class="bar-bg" x="6" y="${h - 12}" width="${bw}" height="6" rx="2"/>`;
+    g += `<rect class="bar${fill > 0.9 ? " full" : ""}" x="6" y="${h - 12}" width="${(bw * fill).toFixed(1)}" height="6" rx="2"/>`;
+    g += `</g></g>`;
+    parts.push(g);
+  }
+  const keepScroll = box.scrollLeft;
+  const wasFit = box.scrollWidth <= box.clientWidth + 1; // 前回は横スクロール不要だった
+  box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="B+tree of ${esc(st.table)}">
+    <defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="arrowhead" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+    ${parts.join("")}</svg>`;
+  if (st._treeShown !== st.table || wasFit) { // テーブル切替時や初めてはみ出したときはルートが見える位置へ
+    box.scrollLeft = Math.max(0, root._x + root._w / 2 - box.clientWidth / 2);
+    st._treeShown = st.table;
+  } else box.scrollLeft = keepScroll;
+}
+
+// ---------- ページインスペクタ ----------
+
+const KIND_NAMES = {
+  type: "種別", count: "個数", next: "next / child (ページ ID)", key: "キー", vlen: "値の長さ", value: "行データ",
+  magic: "マジック", name: "テーブル名", root: "ルートページ", colname: "カラム名", coltype: "型 / 主キー",
+};
+function b64(s) { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); }
+const hex2 = (b) => b.toString(16).padStart(2, "0");
+
+function renderPage() {
+  const id = st.page;
+  $("pg-id").value = id;
+  const info = call("page", id);
+  if (info.error) {
+    $("pg-title").innerHTML = `<span class="err">${esc(info.error)}</span>`;
+    $("hex").innerHTML = ""; $("cells").innerHTML = ""; $("pg-legend").innerHTML = "";
+    return;
+  }
+  const data = b64(info.data);
+  const prev = st.pageDataId === id ? st.pageData : null;
+  st.pageData = data; st.pageDataId = id;
+
+  const kindJa = { catalog: "カタログ", leaf: "葉", internal: "内部ノード", empty: "未使用 (ゼロ)", unknown: "不明" }[info.kind] || info.kind;
+  $("pg-title").innerHTML = `${kindJa}${info.table ? " · " + esc(info.table) : ""} · 使用 ${info.used} / 空き ${info.free} B` +
+    (info.cached ? ` · <span class="badge">cached${info.dirty ? " dirty" : ""}</span>` : ` · <span class="badge">on disk</span>`);
+
+  // 各バイトがどの範囲か
+  const rangeAt = new Int32Array(4096).fill(-1);
+  info.ranges.forEach((r, i) => { for (let b = r.start; b < r.end && b < 4096; b++) rangeAt[b] = i; });
+  const kinds = [...new Set(info.ranges.map((r) => r.kind))];
+  $("pg-legend").innerHTML = kinds.map((k) => `<span class="lg k-${k}">${esc(KIND_NAMES[k] || k)}</span>`).join("") +
+    (prev && data.some((v, i) => v !== prev[i]) ? `<span class="lg chg" style="box-shadow:inset 0 -2px 0 var(--err)">前回表示から変化</span>` : "");
+
+  const per = $("hex").parentElement.clientWidth < 520 ? 8 : 16;
+  const used = info.used;
+  const rowsHtml = [];
+  let zeroRun = [];
+  const flushZero = () => {
+    if (zeroRun.length > 2 && !st.showAll) {
+      const a = zeroRun[0], b = zeroRun[zeroRun.length - 1] + per - 1;
+      rowsHtml.push(`<span class="collapsed">${a.toString(16).padStart(4, "0")}–${b.toString(16).padStart(4, "0")}  ゼロ ${b - a + 1} バイト (未使用) <button data-act="showall">展開</button></span>`);
+    } else zeroRun.forEach((o) => rowsHtml.push(hexRow(o)));
+    zeroRun = [];
+  };
+  const hexRow = (o) => {
+    let hx = "", asc = "";
+    for (let b = o; b < o + per; b++) {
+      const ri = rangeAt[b];
+      const r = ri >= 0 ? info.ranges[ri] : null;
+      let c = r ? `k-${r.kind}${r.cell % 2 === 1 ? " alt" : ""}` : "z";
+      if (r && r.cell === st.selCell && r.cell >= 0) c += " sel";
+      if (prev && prev[b] !== data[b]) c += " chg";
+      const ch = data[b] >= 0x20 && data[b] < 0x7f ? esc(String.fromCharCode(data[b])) : ".";
+      hx += `<span class="b ${c}" data-b="${b}">${hex2(data[b])}</span>` + (b % 8 === 7 && b !== o + per - 1 ? "  " : " ");
+      asc += `<span class="a ${c}" data-b="${b}">${ch}</span>`;
+    }
+    return `<span class="off">${o.toString(16).padStart(4, "0")}</span>  ${hx} ${asc}`;
+  };
+  for (let o = 0; o < 4096; o += per) {
+    let zero = o >= used;
+    if (zero) for (let b = o; b < o + per; b++) if (data[b] !== 0 || (prev && prev[b] !== 0)) { zero = false; break; }
+    if (zero) { zeroRun.push(o); continue; }
+    flushZero();
+    rowsHtml.push(hexRow(o));
+  }
+  flushZero();
+  $("hex").innerHTML = rowsHtml.join("\n");
+  st._ranges = info.ranges;
+
+  // デコードしたセル
+  let th = "", body = "";
+  if (info.kind === "leaf") {
+    th = `<tr><th>#</th><th>off</th><th>key</th><th>len</th>${(info.columns || []).map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+    body = info.cells.map((c) => `<tr data-cell="${c.index}"${c.index === st.selCell ? ' class="current"' : ""}><td>${c.index}</td><td>${c.start}</td><td>${c.key}</td><td>${c.end - c.start - 10}</td>${(c.values || []).map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("");
+  } else if (info.kind === "internal") {
+    th = `<tr><th>#</th><th>off</th><th>key (区切り)</th><th>child</th><th>意味</th></tr>`;
+    body = info.cells.map((c, i) => {
+      const next = info.cells[i + 1];
+      const lo = c.key !== undefined ? `${c.key} ≤ k` : "";
+      const hi = next ? `k < ${next.key}` : "";
+      const mean = [lo, hi].filter(Boolean).join(" かつ ") || "全部";
+      return `<tr data-cell="${c.index}"${c.index === st.selCell ? ' class="current"' : ""}><td>${c.index}</td><td>${c.start}</td><td>${c.key ?? "—"}</td><td><a href="#" data-goto="${c.child}">p${c.child}</a></td><td>${esc(mean)}</td></tr>`;
+    }).join("");
+  } else if (info.kind === "catalog") {
+    th = `<tr><th>#</th><th>off</th><th>テーブル定義</th></tr>`;
+    body = info.cells.map((c) => `<tr data-cell="${c.index}"${c.index === st.selCell ? ' class="current"' : ""}><td>${c.index}</td><td>${c.start}</td><td>${esc(c.text)}</td></tr>`).join("");
+  }
+  $("cells").innerHTML = th + body;
+}
+
+function inspect(id, keepCell) {
+  if (st.page !== id && !keepCell) st.selCell = -1;
+  st.page = id;
+  st.showAll = false;
+  renderPage();
+  document.querySelectorAll("#tree g.node").forEach((g) => g.classList.toggle("sel", +g.dataset.page === id));
+}
+
+// ---------- キャッシュと統計 ----------
+
+function renderCache() {
+  const cs = call("cache");
+  $("cap").value = String(cs.capacity);
+  if (![...$("cap").options].some((o) => o.value === String(cs.capacity))) {
+    $("cap").insertAdjacentHTML("beforeend", `<option>${cs.capacity}</option>`);
+    $("cap").value = String(cs.capacity);
+  }
+  const c = cs.counters, p = st.prevCounters || c;
+  const rows = [
+    ["Get 呼び出し", "gets"], ["キャッシュヒット", "hits"], ["ディスク読込 (ミス)", "reads"],
+    ["ディスク書込", "writes"], ["追い出し", "evictions"], ["新規ページ", "allocs"],
+  ];
+  $("counters").innerHTML = `<tr><th>ファイルのページ数</th><td class="num">${cs.numPages} (${(cs.numPages * 4096 / 1024).toFixed(0)} KiB)</td></tr>` +
+    `<tr><th>キャッシュ中</th><td class="num">${cs.lru.length} / ${cs.capacity}</td></tr>` +
+    rows.map(([l, k]) => `<tr><th>${l} (累計)</th><td class="num${c[k] !== p[k] ? " changed" : ""}">${c[k]}${c[k] !== p[k] ? ` <span class="muted">+${c[k] - p[k]}</span>` : ""}</td></tr>`).join("");
+  st.prevCounters = c;
+  $("lru").innerHTML = cs.lru.map((pg) => {
+    const cl = ["chip"];
+    if (st.hl.alloc.has(pg.id)) cl.push("new");
+    if (st.hl.dirtied.has(pg.id)) cl.push("dirty");
+    else if (st.hl.touched.has(pg.id)) cl.push("read");
+    if (pg.dirty) cl.push("isdirty");
+    return `<span class="${cl.join(" ")}" data-goto="${pg.id}" title="page ${pg.id}${pg.dirty ? " (dirty)" : ""}">p${pg.id}</span>`;
+  }).join("") || `<span class="muted">(空)</span>`;
+}
+
+const METHOD = {
+  "pk-lookup": ["主キー検索", "pk"],
+  "full-scan": ["全件スキャン", "scan"],
+  "pk-insert": ["主キーで挿入", "ins"],
+};
+function accessBadges(s) {
+  const b = s.access.map((a) => {
+    const [ja, cl] = METHOD[a.method] || [a.method, ""];
+    const key = a.key !== undefined && a.key !== null ? ` ${a.key}` : "";
+    const cnt = a.count > 1 ? ` ×${a.count}` : "";
+    return `<span class="badge ${cl}" title="${esc(a.note || "")}">${ja} ${esc(a.table)}${key}${cnt}</span>`;
+  });
+  if (s.rootSplits) b.push(`<span class="badge split">ルート分割 (木が高くなった)</span>`);
+  else if (s.splits) b.push(`<span class="badge split">分割 ${s.splits} 回</span>`);
+  return b.join(" ");
+}
+function statGrid(s) {
+  const items = [
+    ["読んだ行", s.rowsExamined], ["結果の行", s.rowsResult], ["Get 回数", s.pageGets],
+    ["触ったページ", s.touched.length], ["キャッシュヒット", s.cacheHits], ["ディスク読込", s.diskReads],
+    ["ディスク書込", s.diskWrites], ["変更ページ", s.dirtied.length], ["新規ページ", s.allocated.length],
+  ];
+  return `<div class="statgrid">${items.map(([l, v]) => `<div><span class="muted">${l}</span><span>${v}</span></div>`).join("")}</div>`;
+}
+function renderStats() {
+  const ss = st.lastStats;
+  let h = "";
+  if (!ss.length) h = `<div class="muted">まだ実行していません</div>`;
+  else if (ss.length > 4) {
+    // 1 行ずつ挿入した場合などはまとめて表示
+    const sum = { rowsExamined: 0, rowsResult: 0, pageGets: 0, cacheHits: 0, diskReads: 0, diskWrites: 0, splits: 0, rootSplits: 0 };
+    ss.forEach((s) => Object.keys(sum).forEach((k) => (sum[k] += s[k])));
+    sum.touched = [...st.hl.touched]; sum.dirtied = [...st.hl.dirtied]; sum.allocated = [...st.hl.alloc];
+    sum.access = [];
+    h += `<div class="stmt"><code>${ss.length} 文の合計</code>${statGrid(sum)}${sum.rootSplits ? `<span class="badge split">ルート分割 ${sum.rootSplits} 回</span> ` : ""}${sum.splits ? `<span class="badge split">分割 ${sum.splits} 回</span>` : ""}</div>`;
+    const s = ss[ss.length - 1];
+    h += `<div class="stmt"><code>最後の文: ${esc(trunc(s.sql, 160))}</code>${accessBadges(s)}${statGrid(s)}</div>`;
+  } else {
+    h = ss.map((s) => `<div class="stmt"><code>${esc(trunc(s.sql, 200))}</code>${accessBadges(s)}${s.error ? ` <span class="err">${esc(s.error)}</span>` : ""}${statGrid(s)}</div>`).join("");
+  }
+  $("stmts").innerHTML = h;
+  $("cmp").innerHTML = `<tr><th>文</th><th>方法</th><th>読んだ行</th><th>触ったページ</th><th>Get</th></tr>` +
+    st.cmp.slice().reverse().map((s) => {
+      const m = s.access.map((a) => (METHOD[a.method] || [a.method])[0]).join("+") || "—";
+      return `<tr><td title="${esc(s.sql)}">${esc(trunc(s.sql.replace(/\s+/g, " "), 38))}</td><td>${esc(m)}</td><td class="num">${s.rowsExamined}</td><td class="num">${s.touched.length}</td><td class="num">${s.pageGets}</td></tr>`;
+    }).join("");
+}
+const trunc = (s, n) => (s.length > n ? s.slice(0, n) + " …" : s);
+
+// ---------- やってみよう ----------
+
+let tCounter = 0;
+async function doNote(act) {
+  const run = (sql) => exec(sql);
+  switch (act) {
+    case "mk-t":
+      run("CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT);");
+      tCounter = 0;
+      inspect(call("tables").find((x) => x.name === "t")?.root ?? 0);
+      break;
+    case "one-long": {
+      if (!call("tables").find((x) => x.name === "t")) run("CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT);");
+      const keys = treeKeys("t");
+      const k = keys.length ? Math.max(...keys) + 1 : 1;
+      run(`INSERT INTO t VALUES (${k}, '${randWord(320)}');`);
+      break;
+    }
+    case "until-split": {
+      if (!call("tables").find((x) => x.name === "t")) run("CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT);");
+      setBusy(true);
+      try {
+        for (let i = 0; i < 40; i++) {
+          const keys = treeKeys("t");
+          const k = keys.length ? Math.max(...keys) + 1 : 1;
+          const out = exec(`INSERT INTO t VALUES (${k}, '${randWord(320)}');`);
+          if (out.error || out.stats.some((s) => s.splits)) break;
+          await sleep(120);
+        }
+      } finally { setBusy(false); }
+      break;
+    }
+    case "mk-users":
+      run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER);");
+      break;
+    case "bulk200":
+      if (!call("tables").find((x) => x.name === "users")) run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER);");
+      await bulkInsert("users", 200, 40, false);
+      break;
+    case "q-pk": run("SELECT * FROM users WHERE id = 5;"); break;
+    case "q-scan": run("SELECT * FROM users WHERE name = 'x';"); break;
+    case "cap4": setCap(4); break;
+    case "cap64": setCap(64); break;
+    case "del": run("DELETE FROM users WHERE id < 300;"); break;
+  }
+}
+function setCap(n) {
+  const r = call("setCacheCapacity", n);
+  if (r.error) showError(r.error);
+  renderCache();
+}
+
+// ---------- 保存 / 読込 ----------
+
+function saveDB() {
+  const u8 = minidb.exportDB();
+  if (!u8) { showError("export failed"); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([u8], { type: "application/octet-stream" }));
+  a.download = "minidb.db";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+async function loadDB(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const r = call("importDB", buf);
+  if (r.error) { showError(`${file.name}: ${r.error}`); return; }
+  resetView();
+  $("out").innerHTML = `<div class="ok">${esc(file.name)} を読み込みました (${buf.length} バイト = ${buf.length / 4096} ページ)</div>`;
+}
+function resetView() {
+  st.table = null; st.page = 0; st.pageData = null; st.pageDataId = -1; st.selCell = -1;
+  st.hl = { touched: new Set(), dirtied: new Set(), alloc: new Set() };
+  st.lastStats = []; st.cmp = []; st.prevCounters = null;
+  refresh();
+}
+
+// ---------- イベント ----------
+
+function bind() {
+  $("btn-run").onclick = () => { const s = $("sql").value.trim(); if (s) exec(s); };
+  $("sql").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("btn-run").click(); }
+  });
+  $("preset").onchange = (e) => { if (PRESETS[e.target.value]) $("sql").value = PRESETS[e.target.value]; e.target.value = ""; };
+  $("history").onclick = (e) => { const b = e.target.closest("[data-h]"); if (b) $("sql").value = st.history[+b.dataset.h].replace(/^-- .*\n/, ""); };
+  $("btn-bulk").onclick = () => bulkInsert($("bulk-table").value, Math.max(1, Math.min(5000, +$("bulk-n").value || 1)), +$("bulk-len").value, $("bulk-anim").checked);
+  $("tree-table").onchange = (e) => { st.table = e.target.value; renderTree(); };
+  $("btn-cat").onclick = () => inspect(0);
+  $("tree").onclick = (e) => { const g = e.target.closest("g.node"); if (g) inspect(+g.dataset.page); };
+  $("lru").onclick = (e) => { const c = e.target.closest("[data-goto]"); if (c) inspect(+c.dataset.goto); };
+  $("cells").onclick = (e) => {
+    const a = e.target.closest("[data-goto]");
+    if (a) { e.preventDefault(); inspect(+a.dataset.goto); return; }
+    const tr = e.target.closest("tr[data-cell]");
+    if (tr) { st.selCell = +tr.dataset.cell; renderPage(); scrollToSel(); }
+  };
+  $("hex").onclick = (e) => {
+    if (e.target.dataset.act === "showall") { st.showAll = true; renderPage(); return; }
+    const b = e.target.closest("[data-b]");
+    if (!b) return;
+    const r = rangeOf(+b.dataset.b);
+    if (r && r.cell >= 0) { st.selCell = r.cell; renderPage(); const tr = document.querySelector(`#cells tr[data-cell="${r.cell}"]`); if (tr) tr.scrollIntoView({ block: "nearest" }); }
+  };
+  $("hex").onmouseover = (e) => {
+    const b = e.target.closest("[data-b]");
+    if (!b) return;
+    const i = +b.dataset.b, r = rangeOf(i);
+    const v = st.pageData[i];
+    $("hexinfo").textContent = `offset ${i} (0x${i.toString(16)}) = 0x${hex2(v)} (${v})` + (r ? ` · [${r.start}:${r.end}) ${r.label}` : i >= 0 ? " · 未使用" : "");
+  };
+  $("pg-id").onchange = (e) => inspect(Math.max(0, +e.target.value || 0));
+  $("pg-prev").onclick = () => inspect(Math.max(0, st.page - 1));
+  $("pg-next").onclick = () => inspect(st.page + 1);
+  $("cap").onchange = (e) => setCap(+e.target.value);
+  document.querySelector(".notes").onclick = (e) => { const b = e.target.closest("[data-do]"); if (b && !st.busy) doNote(b.dataset.do); };
+  $("btn-save").onclick = saveDB;
+  $("btn-load").onclick = () => $("file").click();
+  $("file").onchange = (e) => { const f = e.target.files[0]; if (f) loadDB(f); e.target.value = ""; };
+  $("btn-reset").onclick = () => { call("reset"); resetView(); $("out").innerHTML = `<div class="muted">空の DB に戻しました</div>`; };
+}
+function rangeOf(i) { return (st._ranges || []).find((r) => i >= r.start && i < r.end); }
+function scrollToSel() { const s = document.querySelector("#hex .sel"); if (s) s.scrollIntoView({ block: "nearest" }); }
+
+// ---------- 起動 ----------
+
+async function boot() {
+  try {
+    const go = new Go();
+    const resp = fetch("main.wasm");
+    let inst;
+    try {
+      inst = (await WebAssembly.instantiateStreaming(resp, go.importObject)).instance;
+    } catch (e) {
+      inst = (await WebAssembly.instantiate(await (await fetch("main.wasm")).arrayBuffer(), go.importObject)).instance;
+    }
+    go.run(inst);
+    if (!window.minidb) throw new Error("minidb API が見つかりません");
+    try { st.history = JSON.parse(localStorage.getItem("minidb-history") || "[]"); } catch (e) { st.history = []; }
+    renderHistory();
+    bind();
+    $("loading").hidden = true;
+    $("app").hidden = false;
+    refresh();
+  } catch (e) {
+    $("loading").hidden = true;
+    $("fatal").hidden = false;
+    $("fatal").textContent = "読み込みに失敗しました: " + e.message;
+  }
+}
+boot();
+</script>
+</body>
+</html>

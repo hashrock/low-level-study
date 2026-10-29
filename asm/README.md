@@ -12,10 +12,43 @@ cd ../emu && go run . run /abs/path/to/prog       # エミュレータで実行
 
 出力ファイル名を省略すると、`as` は `foo.s → foo.o`、`ld`/`build` は `a.out` です。
 
+### ライブラリとして使う (`rvasm/rvasm`)
+
+本体は `rvasm/rvasm` パッケージにあり、文字列 → バイト列の純粋な関数だけでできています
+(ファイルもサブプロセスも使わないので `GOOS=js GOARCH=wasm` でもそのまま動きます)。
+他のモジュールからは `go.mod` に `replace rvasm => ../asm` を書いて `import "rvasm/rvasm"` します。
+
+```go
+obj, err := rvasm.Assemble("a.s", src)          // *Object (obj.ELF() が .o のバイト列)
+obj, err := rvasm.ReadObject("a.o", data)       // 既存の .o を読む
+exe, err := rvasm.Link(obj1, obj2)              // []byte: 静的 ELF 実行ファイル (エントリ _start)
+exe, err := rvasm.Build(rvasm.Source{Name: "a.s", Text: src}, ...)  // アセンブル + リンク
+
+p, err := rvasm.BuildProgram(srcs...)           // 可視化用 (LinkProgram も同様)
+p.ELF                       // 実行ファイル
+p.Listing                   // []Line: アドレス順。命令ごとに Addr / Word (リロケーション適用後) /
+                            //   File・Line・Col・Source (元の行) / Mnemonic・Pseudo (li → addi など) /
+                            //   Enc (Format R/I/S/B/U/J, opcode rd funct3 rs1 rs2 funct7 imm,
+                            //        Fields = 31→0 のビット範囲 [{name:"imm[11:0]", hi:31, lo:20, value}…])
+                            //   データ (.word / .asciz …) は Kind "data" と Bytes
+p.Relocs                    // []Reloc: Type / Symbol / Addend / P (Addr) / S (SymAddr) /
+                            //   Value (埋め込んだ値) / Before・After (書き換え前後の命令語)
+p.Symbols, p.Sections, p.Entry
+rvasm.Decode(word)          // 任意の 32bit 命令語を Encoding に分解
+```
+
+エラーは `*rvasm.Error` (`File` `Line` `Col` `Msg`、表示は `a.s:3:5: ...`) で返ります。
+未定義シンボルなどのリンクエラーも、参照している命令の行を指します。
+各構造体には JSON タグが付いているので、そのまま `json.Marshal` して JS に渡せます。
+
 ## ファイル構成
+
+`main.go` (CLI) 以外はすべて `rvasm/` パッケージにあります。
 
 | ファイル | 役割 |
 |---|---|
+| `api.go`    | 公開 API (`Assemble` `Link` `Build` `BuildProgram` …) とリスティング・リロケーション情報 |
+| `decode.go` | 命令語を形式とビットフィールドに分解 (`Decode`、可視化用) |
 | `lexer.go`  | 1 行をトークン (識別子・数値・文字列・記号) に分解。コメント `#` `//` |
 | `parser.go` | ラベル / ニーモニック / オペランドに分割。レジスタ名・式・`off(reg)` の解釈 |
 | `encode.go` | 命令表 (`opTable`) と R/I/S/B/U/J 形式のエンコード |

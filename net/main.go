@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"mininet/mininet"
 )
 
 const usage = `usage: mininet node [flags] <app> [args]
@@ -55,24 +57,24 @@ func main() {
 		os.Exit(2)
 	}
 
-	mac, err := ParseMAC(*macStr)
+	mac, err := mininet.ParseMAC(*macStr)
 	check(err)
-	ip, err := ParseIP(*ipStr)
+	ip, err := mininet.ParseIP(*ipStr)
 	check(err)
-	wire, err := NewUDPWire(*listen, *peer)
+	wire, err := mininet.NewUDPWire(*listen, *peer)
 	check(err)
-	var pcap *PcapWriter
+	var pcap *mininet.PcapWriter
 	if *pcapPath != "" {
-		pcap, err = NewPcapWriter(*pcapPath)
+		pcap, err = mininet.NewPcapWriter(*pcapPath)
 		check(err)
 	}
-	var dev LinkDevice = wire
+	var dev mininet.LinkDevice = wire
 	if *loss > 0 {
-		dev = NewLossyLink(wire, *loss, time.Now().UnixNano())
+		dev = mininet.NewLossyLink(wire, *loss, time.Now().UnixNano())
 	}
-	s := NewStack(dev, mac, ip, pcap)
+	s := mininet.NewStack(dev, mac, ip, pcap)
 	if *verbose {
-		s.Logf = StdLogf
+		s.Logf = mininet.StdLogf
 	}
 	defer func() {
 		s.Close()
@@ -87,7 +89,7 @@ func main() {
 	}
 }
 
-func runApp(s *Stack, args []string) error {
+func runApp(s *mininet.Stack, args []string) error {
 	arg := func(i int) string {
 		if i >= len(args) {
 			fmt.Fprint(os.Stderr, usage)
@@ -95,7 +97,7 @@ func runApp(s *Stack, args []string) error {
 		}
 		return args[i]
 	}
-	parseIP := func(i int) IP { ip, err := ParseIP(arg(i)); check(err); return ip }
+	parseIP := func(i int) mininet.IP { ip, err := mininet.ParseIP(arg(i)); check(err); return ip }
 	parsePort := func(i int) uint16 { p, err := strconv.ParseUint(arg(i), 10, 16); check(err); return uint16(p) }
 
 	switch args[0] {
@@ -106,9 +108,9 @@ func runApp(s *Stack, args []string) error {
 		check(err)
 		ul, err := s.ListenUDP(7)
 		check(err)
-		go ServeTCPEcho(tl)
-		go ServeHTTP(hl)
-		go ServeUDPEcho(ul)
+		go mininet.ServeTCPEcho(tl)
+		go mininet.ServeHTTP(hl)
+		go mininet.ServeUDPEcho(ul)
 		fmt.Printf("%v (%v) serving: tcp echo :7, udp echo :7, http :80. Ctrl-C to stop.\n", s.IP, s.MAC)
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -155,7 +157,7 @@ func runApp(s *Stack, args []string) error {
 		return fmt.Errorf("no reply")
 
 	case "tcp-echo":
-		got, err := TCPEchoClient(s, parseIP(1), parsePort(2), []byte(arg(3)))
+		got, err := mininet.TCPEchoClient(s, parseIP(1), parsePort(2), []byte(arg(3)))
 		if err != nil {
 			return err
 		}
@@ -167,7 +169,7 @@ func runApp(s *Stack, args []string) error {
 		data := make([]byte, n)
 		rand.Read(data)
 		start := time.Now()
-		got, err := TCPEchoClient(s, parseIP(1), parsePort(2), data)
+		got, err := mininet.TCPEchoClient(s, parseIP(1), parsePort(2), data)
 		if err != nil {
 			return err
 		}
@@ -180,7 +182,7 @@ func runApp(s *Stack, args []string) error {
 		fmt.Println("integrity OK")
 
 	case "http-get":
-		resp, err := HTTPGet(s, parseIP(1), parsePort(2), arg(3))
+		resp, err := mininet.HTTPGet(s, parseIP(1), parsePort(2), arg(3))
 		if err != nil {
 			return err
 		}

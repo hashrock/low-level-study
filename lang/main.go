@@ -5,23 +5,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"minilang/minilang"
 )
 
 // runSource はソースを 字句解析 → 構文解析 → コンパイル → VM 実行 する。
 func runSource(src string, out io.Writer, dis bool) error {
-	prog, err := Parse(src)
+	prog, err := minilang.Parse(src)
 	if err != nil {
 		return err
 	}
-	proto, err := NewCompiler(false).Compile(prog)
+	proto, err := minilang.NewCompiler(false).Compile(prog)
 	if err != nil {
 		return err
 	}
 	if dis {
-		Disassemble(proto, out)
+		minilang.Disassemble(proto, out)
 		return nil
 	}
-	_, err = NewVM(out).Run(proto)
+	_, err = minilang.NewVM(out).Run(proto)
 	return err
 }
 
@@ -47,8 +49,8 @@ func main() {
 }
 
 func repl() {
-	c := NewCompiler(true)
-	vm := NewVM(os.Stdout)
+	c := minilang.NewCompiler(true)
+	vm := minilang.NewVM(os.Stdout)
 	sc := bufio.NewScanner(os.Stdin)
 	fmt.Println("minilang REPL (Ctrl-D で終了)")
 	buf := ""
@@ -63,17 +65,17 @@ func repl() {
 			return
 		}
 		buf += sc.Text() + "\n"
-		prog, err := Parse(buf)
-		if le, ok := err.(*LangError); ok && le.AtEOF {
+		prog, err := minilang.Parse(buf)
+		if le, ok := err.(*minilang.LangError); ok && le.AtEOF {
 			continue // 入力が途中なので次の行を読む
 		}
 		buf = ""
 		if err == nil {
-			var proto *Proto
+			var proto *minilang.Proto
 			if proto, err = c.Compile(prog); err == nil {
-				var v Value
+				var v minilang.Value
 				if v, err = vm.Run(proto); err == nil && v != nil {
-					fmt.Println(format(v, true))
+					fmt.Println(minilang.Format(v, true))
 				}
 			}
 		}

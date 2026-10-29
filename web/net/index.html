@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mininet TCP/IP</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  header.top .spacer { flex: 1; }
+  .layout { display: grid; gap: 12px; grid-template-columns: minmax(250px, 1fr) minmax(420px, 2.2fr) minmax(250px, 1fr);
+    grid-template-areas: "ctl ctl ctl" "a seq b" "insp insp fsm" "log log notes"; }
+  .ctl { grid-area: ctl; } .nodeA { grid-area: a; } .nodeB { grid-area: b; } .seq { grid-area: seq; }
+  .insp { grid-area: insp; } .fsm { grid-area: fsm; } .logp { grid-area: log; } .notes { grid-area: notes; }
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: 1fr 1fr; grid-template-areas: "ctl ctl" "seq seq" "a b" "insp insp" "fsm notes" "log log"; }
+  }
+  @media (max-width: 640px) {
+    .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "ctl" "seq" "a" "b" "insp" "fsm" "log" "notes"; }
+  }
+  .layout > .panel { min-width: 0; }
+  .layout[hidden] { display: none; }
+  .ctl .toolbar { margin-bottom: 6px; }
+  .ctl label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .ctl input[type=range] { width: 110px; accent-color: var(--accent); }
+  .ctl input[type=number] { width: 72px; }
+  .ctl input[type=text] { width: 90px; }
+  .ctl .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .ctl .val { font-family: var(--mono); font-size: 12px; min-width: 4.5em; display: inline-block; }
+  button.on { background: var(--accent-soft); border-color: var(--accent); }
+  #opstatus { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; min-height: 1.5em; }
+
+  /* ノードカード */
+  .node h2 .role { text-transform: none; letter-spacing: 0; }
+  .node .addr { font-family: var(--mono); font-size: 12px; margin-bottom: 6px; }
+  .node h3 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 10px 0 4px; }
+  .conn { border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 6px; margin-bottom: 6px; cursor: pointer; }
+  .conn:hover { border-color: var(--accent); }
+  .conn.current { border-color: var(--accent); }
+  .conn .hd { font-family: var(--mono); font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .conn table.kv td, .conn table.kv th { padding: 0 4px; }
+  .st { font-weight: bold; }
+  .empty { color: var(--muted); font-size: 12px; }
+
+  /* シーケンス図 */
+  .seqhead { position: relative; height: 34px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--border); }
+  .seqhead div { position: absolute; top: 0; transform: translateX(-50%); text-align: center; line-height: 1.25; white-space: nowrap; }
+  .seqhead .nA { color: var(--c1); } .seqhead .nB { color: var(--c2); }
+  #seqscroll { height: 560px; overflow: auto; position: relative; }
+  @media (max-width: 640px) { #seqscroll { height: 440px; } .ctl .sep { display: none; } }
+  #seqsvg { display: block; }
+  #seqsvg text { font-family: var(--mono); font-size: 11px; fill: var(--text); }
+  #seqsvg .life { stroke: var(--border); stroke-width: 2; }
+  #seqsvg .tm { fill: var(--muted); font-size: 10px; }
+  #seqsvg .fr { cursor: pointer; }
+  #seqsvg .fr line, #seqsvg .fr polyline { stroke-width: 1.5; fill: none; }
+  #seqsvg .fr .hit { stroke: transparent; stroke-width: 12; }
+  #seqsvg .fr .ah { stroke: none; }
+  #seqsvg .p-tcp line.ln { stroke: var(--c1); } #seqsvg .p-tcp .ah { fill: var(--c1); }
+  #seqsvg .p-arp line.ln { stroke: var(--c4); } #seqsvg .p-arp .ah { fill: var(--c4); }
+  #seqsvg .p-icmp line.ln { stroke: var(--c6); } #seqsvg .p-icmp .ah { fill: var(--c6); }
+  #seqsvg .p-udp line.ln { stroke: var(--c3); } #seqsvg .p-udp .ah { fill: var(--c3); }
+  #seqsvg .p-rst line.ln { stroke: var(--c5); } #seqsvg .p-rst .ah { fill: var(--c5); }
+  #seqsvg .fr.flight line.ln { stroke-dasharray: 4 3; }
+  #seqsvg .fr.dropped line.ln { stroke: var(--err); stroke-dasharray: 3 3; }
+  #seqsvg .fr .x { stroke: var(--err); stroke-width: 2.2; }
+  #seqsvg .fr .tag { fill: var(--warn); font-weight: bold; }
+  #seqsvg .fr .dtag { fill: var(--err); font-weight: bold; }
+  #seqsvg text.lb, #seqsvg .note text, #seqsvg .opsep text { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+  #seqsvg .fr:hover text.lb { fill: var(--accent); }
+  #seqsvg .fr.sel line.ln { stroke: var(--accent); stroke-width: 3; }
+  #seqsvg .fr.sel .ah { fill: var(--accent); }
+  #seqsvg .fr.sel text.lb { fill: var(--accent); font-weight: bold; }
+  #seqsvg .fr.dim { opacity: .35; }
+  #seqsvg .stlab { font-size: 10px; }
+  #seqsvg .stlab rect { fill: var(--panel-2); stroke: var(--border); }
+  #seqsvg .stlab.A text { fill: var(--c1); } #seqsvg .stlab.B text { fill: var(--c2); }
+  #seqsvg .stlab.selpair rect { stroke: var(--accent); fill: var(--accent-soft); }
+  #seqsvg .note text { fill: var(--warn); font-size: 10px; font-weight: bold; }
+  #seqsvg .opsep line { stroke: var(--muted); stroke-dasharray: 2 4; }
+  #seqsvg .opsep text { fill: var(--muted); font-size: 11px; font-family: var(--sans); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 4px; }
+
+  /* インスペクタ */
+  .insp-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 12px; }
+  @media (max-width: 1000px) { .insp-wrap { grid-template-columns: minmax(0, 1fr); } }
+  .insp details { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; }
+  .insp summary { cursor: pointer; padding: 3px 8px; font-size: 13px; }
+  .insp summary b { margin-right: 6px; }
+  .insp summary .muted { font-family: var(--mono); font-size: 12px; }
+  .insp details table.kv { margin: 0 0 4px; }
+  .insp table.kv td { white-space: normal; word-break: break-all; }
+  .insp table.kv tr:hover td, .insp table.kv tr:hover th { background: var(--accent-soft); }
+  .insp .meta { font-family: var(--mono); font-size: 12px; margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .hex { font-family: var(--mono); font-size: 12px; line-height: 1.55; overflow: auto; white-space: pre; max-height: 440px; }
+  .hex .off { color: var(--muted); }
+  .hex span.b { padding: 0 1px; border-radius: 2px; }
+  .hex .L0 { background: color-mix(in srgb, var(--c1) 20%, transparent); }
+  .hex .L1 { background: color-mix(in srgb, var(--c2) 20%, transparent); }
+  .hex .L2 { background: color-mix(in srgb, var(--c3) 24%, transparent); }
+  .hex .L3 { background: color-mix(in srgb, var(--c4) 20%, transparent); }
+  .hex .L4 { background: color-mix(in srgb, var(--c6) 20%, transparent); }
+  .hex .Lpad { color: var(--muted); }
+  .hex .hi { background: var(--hl); outline: 1px solid var(--warn); }
+  .insp .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .sw.L0 { background: color-mix(in srgb, var(--c1) 45%, transparent); }
+  .sw.L1 { background: color-mix(in srgb, var(--c2) 45%, transparent); }
+  .sw.L2 { background: color-mix(in srgb, var(--c3) 50%, transparent); }
+  .sw.L3 { background: color-mix(in srgb, var(--c4) 45%, transparent); }
+  .sw.L4 { background: color-mix(in srgb, var(--c6) 45%, transparent); }
+  .sw.Lpad { background: var(--panel-2); border: 1px solid var(--border); }
+
+  /* 状態機械 */
+  #fsmsvg { width: 100%; max-width: 420px; display: block; margin: 0 auto; }
+  #fsmsvg .bx rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 1; }
+  #fsmsvg .bx text { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); text-anchor: middle; dominant-baseline: central; }
+  #fsmsvg .bx.vA rect, #fsmsvg .bx.vB rect { stroke: var(--muted); }
+  #fsmsvg .bx.vA text, #fsmsvg .bx.vB text { fill: var(--text); }
+  #fsmsvg .bx.curA rect { stroke: var(--c1); stroke-width: 2.5; fill: var(--accent-soft); }
+  #fsmsvg .bx.curB rect { stroke: var(--c2); stroke-width: 2.5; fill: var(--accent-soft); }
+  #fsmsvg .bx.curA.curB rect { stroke: var(--accent); }
+  #fsmsvg .bx.curA text, #fsmsvg .bx.curB text { fill: var(--text); font-weight: bold; }
+  #fsmsvg .ed { stroke: var(--border); stroke-width: 1.2; fill: none; }
+  #fsmsvg .ed.eA { stroke: var(--c1); stroke-width: 2; }
+  #fsmsvg .ed.eB { stroke: var(--c2); stroke-width: 2; }
+  #fsmsvg .ed.extra { stroke-dasharray: 4 3; }
+  #fsmsvg .edl { font-size: 8.5px; fill: var(--muted); font-family: var(--sans); }
+  #fsmsvg .tagA circle { fill: var(--c1); } #fsmsvg .tagB circle { fill: var(--c2); }
+  #fsmsvg .tagA text, #fsmsvg .tagB text { fill: var(--panel); font-size: 9px; font-weight: bold; text-anchor: middle; dominant-baseline: central; font-family: var(--sans); }
+  #fsmsvg marker path { fill: var(--muted); }
+  .hist { font-family: var(--mono); font-size: 11.5px; margin-top: 6px; word-break: break-all; }
+  .hist .A { color: var(--c1); } .hist .B { color: var(--c2); }
+  #pairsel { max-width: 100%; font-size: 12px; }
+
+  .logp .terminal { min-height: 160px; max-height: 260px; font-size: 12px; }
+  .notes ol { margin: 0; padding-left: 20px; }
+  .notes li { margin-bottom: 6px; }
+  .notes code { font-size: 12px; }
+  #err { margin: 8px 16px 0; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>mininet — 自作 TCP/IP スタック</h1>
+  <span class="muted">2 ノードを wasm 内の仮想ケーブルでつなぎ、流れるフレームと TCP の状態を見る</span>
+</header>
+<div id="err" class="err" hidden></div>
+<main>
+  <div id="loading" class="loading">wasm を読み込み中…</div>
+  <div class="layout" id="app" hidden>
+    <section class="panel ctl">
+      <h2>操作 (B → A)</h2>
+      <div class="toolbar">
+        <button class="primary" data-op="ping">ping</button>
+        <button data-op="udp">UDP echo</button>
+        <button class="primary" data-op="tcp-echo">TCP echo</button>
+        <input type="text" id="echomsg" value="hello" aria-label="echo する文字列">
+        <span class="sep"></span>
+        <button class="primary" data-op="bulk">TCP bulk</button>
+        <label><input type="number" id="bulkkb" value="16" min="1" max="512" aria-label="bulk のサイズ (KB)">KB</label>
+        <span class="sep"></span>
+        <button data-op="http">HTTP GET</button>
+        <button data-op="rst">閉じたポート :81 へ接続 (RST)</button>
+        <button data-op="flush-arp">ARP キャッシュ消去</button>
+      </div>
+      <div class="toolbar">
+        <label>損失 <input type="range" id="loss" min="0" max="50" step="1" value="0"><span class="val" id="lossv">0%</span></label>
+        <label>片道遅延 <input type="range" id="lat" min="0" max="500" step="10" value="100"><span class="val" id="latv">100 ms</span></label>
+        <button id="dropnext">次のフレームを落とす</button>
+        <span class="sep"></span>
+        <button id="pause">ケーブル一時停止</button>
+        <button id="step" disabled>1 フレーム届ける</button>
+        <button id="drophead" disabled>先頭を捨てる</button>
+        <span class="badge" id="inflight">ケーブル上 0</span>
+      </div>
+      <div class="toolbar">
+        <label><input type="checkbox" id="autoscroll" checked>自動スクロール</label>
+        <button id="pcapbtn">pcap をダウンロード</button>
+        <label><input type="checkbox" id="pcapdrop" checked>捨てたフレームも含める</label>
+        <button id="reset">リセット</button>
+        <span class="muted" id="counts"></span>
+      </div>
+      <div id="opstatus" class="muted">ボタンを押すと B (10.0.0.2) から A (10.0.0.1) へ通信します。</div>
+    </section>
+
+    <section class="panel node nodeA" id="nodeA"></section>
+
+    <section class="panel seq">
+      <h2>シーケンス図 <span class="muted" style="text-transform:none;letter-spacing:0">(矢印をクリックするとパケットの中身)</span></h2>
+      <div class="seqhead" id="seqhead"></div>
+      <div id="seqscroll"><svg id="seqsvg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+      <div class="legend">
+        <span><i style="background:var(--c1)"></i>TCP</span><span><i style="background:var(--c4)"></i>ARP</span>
+        <span><i style="background:var(--c6)"></i>ICMP</span><span><i style="background:var(--c3)"></i>UDP</span>
+        <span><i style="background:var(--c5)"></i>RST</span><span><span class="err">✕</span> 捨てられた</span>
+        <span><b style="color:var(--warn)">↻</b> 再送</span><span>破線 = ケーブル上</span>
+      </div>
+    </section>
+
+    <section class="panel node nodeB" id="nodeB"></section>
+
+    <section class="panel insp">
+      <h2>パケットインスペクタ</h2>
+      <div id="insp"><div class="empty">シーケンス図の矢印をクリックしてください。</div></div>
+    </section>
+
+    <section class="panel fsm">
+      <h2>TCP 状態機械</h2>
+      <div class="toolbar"><select id="pairsel" aria-label="コネクション"><option value="">(最新のコネクションを追従)</option></select></div>
+      <svg id="fsmsvg" viewBox="0 0 360 420" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="hist" id="hist"></div>
+    </section>
+
+    <section class="panel logp">
+      <h2>ログ (操作の結果・スタックのイベント)</h2>
+      <div class="terminal" id="log"></div>
+    </section>
+
+    <section class="panel notes">
+      <h2>見どころ</h2>
+      <ol>
+        <li><b>3-way handshake</b>: 「TCP echo」を押すと <code>[SYN]</code> → <code>[SYN,ACK]</code> → <code>[ACK]</code> が往復し、両側が <code>ESTABLISHED</code> になる。最初の通信の前には ARP の <code>who-has</code> / <code>is-at</code> が飛ぶ (「ARP キャッシュ消去」でもう一度見られる)。</li>
+        <li><b>再送</b>: 損失を 20% にして「TCP bulk」。<span class="err">✕</span> で落ちたセグメントのあと、受信側は同じ <code>ack</code> を繰り返し (<code>dup ACK</code>)、3 回目で送信側が <b>fast retx</b>。ACK も来なければ <b>RTO</b> 切れで未 ACK の先頭から送り直す (Go-Back-N)。<code>↻</code> が再送。最後に SHA-256 で一致を確認する。</li>
+        <li><b>TIME_WAIT</b>: echo のあと先に <code>FIN</code> を送ったクライアント B は <code>FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT</code> と進み、2 秒 (本来は 2MSL) 待ってから <code>CLOSED</code>。サーバ A は <code>CLOSE_WAIT → LAST_ACK → CLOSED</code>。</li>
+        <li><b>1 コマずつ</b>: 「ケーブル一時停止」→ ping → 「1 フレーム届ける」で 1 枚ずつ配送。「先頭を捨てる」で ARP や SYN を落とし、再送の様子を見る。</li>
+        <li><b>RST</b>: 誰も LISTEN していない :81 へ SYN を送ると <code>[RST,ACK]</code> が返り、接続は即座に失敗する。</li>
+      </ol>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">pcap は Wireshark でそのまま開けます (時刻はケーブルに乗った時刻)。TCP の seq/ack は ISN を 0 とする相対値で表示しています。</p>
+    </section>
+  </div>
+</main>
+<script src="../shared/wasm_exec.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function showErr(msg) { const e = $("err"); e.hidden = false; e.textContent = msg; }
+window.addEventListener("error", (e) => showErr("エラー: " + e.message));
+
+// ---------------------------------------------------------------------------
+// 状態
+let next = 0;            // 次に poll する since
+let events = [];         // 全イベント (幅が変わったら再レイアウトに使う)
+let lastPoll = null;
+let selId = 0;           // インスペクタで選んだフレーム
+let selPair = "";        // 状態機械で見るコネクション ("" = 最新を追従)
+let latestPair = "";
+const pairs = new Map(); // pair -> {A: [{from,to,t}], B: [...]}
+const changedAt = new Map();
+const prevVals = new Map();
+
+const OPNAMES = { ping: "ping", udp: "UDP echo", "tcp-echo": "TCP echo", bulk: "TCP bulk", http: "HTTP GET", rst: "閉じたポートへ接続", "flush-arp": "ARP キャッシュ消去" };
+
+// ---------------------------------------------------------------------------
+// シーケンス図
+const ROW = 22, RXSTEP = 7;
+let L;  // レイアウト状態
+function geom() {
+  const W = Math.max(300, $("seqscroll").clientWidth);
+  const narrow = W < 560;
+  const timeCol = narrow ? 0 : 52;
+  const side = narrow ? 58 : 84;
+  return { W, narrow, timeCol, xA: timeCol + side, xB: W - side };
+}
+const SHORT = { ESTABLISHED: "ESTAB", SYN_SENT: "SYN_S", SYN_RCVD: "SYN_R", FIN_WAIT_1: "FIN_W1", FIN_WAIT_2: "FIN_W2", CLOSE_WAIT: "C_WAIT", TIME_WAIT: "TIME_W", LAST_ACK: "L_ACK" };
+
+function resetLayout() {
+  const svg = $("seqsvg");
+  svg.innerHTML = "";
+  const g = geom();
+  L = { g, y: 14, frames: new Map(), lastSide: { A: 0, B: 0 }, svg,
+        lifeA: null, lifeB: null, gFrames: null, gTop: null };
+  svg.setAttribute("width", g.W);
+  L.lifeA = el("line", { class: "life", x1: g.xA, x2: g.xA, y1: 0, y2: 10 }, svg);
+  L.lifeB = el("line", { class: "life", x1: g.xB, x2: g.xB, y1: 0, y2: 10 }, svg);
+  L.gFrames = el("g", {}, svg);
+  const head = $("seqhead");
+  head.innerHTML = `<div class="nA" style="left:${g.xA}px"><b>A</b> 10.0.0.1<br><span class="muted">サーバ</span></div>` +
+                   `<div class="nB" style="left:${g.xB}px"><b>B</b> 10.0.0.2<br><span class="muted">クライアント</span></div>`;
+  for (const e of events) layoutEvent(e);
+  finishLayout();
+}
+
+function finishLayout() {
+  const h = L.y + 30;
+  L.svg.setAttribute("height", h);
+  L.lifeA.setAttribute("y2", h);
+  L.lifeB.setAttribute("y2", h);
+}
+
+function arrowHead(g, x1, y1, x2, y2) {
+  const a = Math.atan2(y2 - y1, x2 - x1), s = 7;
+  const p = [[x2, y2], [x2 - s * Math.cos(a - 0.4), y2 - s * Math.sin(a - 0.4)], [x2 - s * Math.cos(a + 0.4), y2 - s * Math.sin(a + 0.4)]];
+  return el("polygon", { class: "ah", points: p.map((q) => q.join(",")).join(" ") }, g);
+}
+
+function sideLabel(node, y, text, cls, title) {
+  const g = L.g, xs = node === "A" ? g.xA : g.xB;
+  y = Math.max(y, L.lastSide[node] + 14);
+  L.lastSide[node] = y;
+  const grp = el("g", { class: cls }, L.gFrames);
+  const t = el("text", { x: node === "A" ? xs - 6 : xs + 6, y: y + 3.5, "text-anchor": node === "A" ? "end" : "start" }, grp);
+  t.textContent = text;
+  if (title) el("title", {}, grp).textContent = title;
+  return { grp, t, y };
+}
+
+function layoutEvent(e) {
+  const g = L.g;
+  switch (e.k) {
+  case "op":
+    if (e.status !== "start") return;
+    {
+      L.y += 10;
+      const grp = el("g", { class: "opsep" }, L.gFrames);
+      el("line", { x1: 4, x2: g.W - 4, y1: L.y, y2: L.y }, grp);
+      const t = el("text", { x: g.xA + 8, y: L.y - 3 }, grp);
+      t.textContent = "▶ " + (OPNAMES[e.name] || e.name) + (e.msg ? " " + e.msg + (e.name === "bulk" ? " KB" : "") : "");
+      L.y += 14;
+    }
+    return;
+  case "tx": {
+    const fromA = e.dir === "AB";
+    const x1 = fromA ? g.xA : g.xB, x2 = fromA ? g.xB : g.xA;
+    L.y += ROW - 6;          // ラベル (矢印の始点の上) のぶん
+    const y0 = L.y;
+    L.y += 6;
+    let proto = e.proto;
+    if (e.flags && e.flags.includes("RST")) proto = "rst";
+    const grp = el("g", { class: "fr p-" + proto, "data-id": e.id }, L.gFrames);
+    const f = { e, x1, x2, y0, grp, line: null, hit: null, ah: null, done: false };
+    L.frames.set(e.id, f);
+    if (!g.narrow) {
+      const tm = el("text", { class: "tm", x: 4, y: y0 + 3 }, grp);
+      tm.textContent = (e.t / 1000).toFixed(3) + "s";
+    }
+    const lx = x1 + (fromA ? 10 : -10);
+    const lb = el("text", { class: "lb", x: lx, y: y0 - 3, "text-anchor": fromA ? "start" : "end" }, grp);
+    if (e.retx) { const ts = el("tspan", { class: "tag" }, lb); ts.textContent = "↻ "; }
+    const main = el("tspan", {}, lb); main.textContent = e.label;
+    if (e.dup) { const ts = el("tspan", { class: "tag" }, lb); ts.textContent = " dup ACK#" + e.dup; }
+    el("title", {}, grp).textContent = `#${e.id} ${fromA ? "A→B" : "B→A"} ${e.len} bytes${e.pair ? "\n" + e.pair : ""}${e.retx ? "\n再送" : ""}`;
+    f.hit = el("line", { class: "hit", x1, y1: y0, x2: x1, y2: y0 }, grp);
+    f.line = el("line", { class: "ln", x1, y1: y0, x2: x1, y2: y0 }, grp);
+    if (e.drop) dropFrame(f, 0.55, y0 + 14, e.reason);
+    else grp.classList.add("flight");
+    if (e.id === selId) grp.classList.add("sel");
+    return;
+  }
+  case "rx": {
+    const f = L.frames.get(e.id);
+    if (!f || f.done) return;
+    L.y += RXSTEP;
+    const y1 = Math.max(L.y, f.y0 + 10);
+    setLine(f, f.x2, y1);
+    f.ah = arrowHead(f.grp, f.x1, f.y0, f.x2, y1);
+    f.grp.classList.remove("flight");
+    f.done = true;
+    return;
+  }
+  case "drop": {
+    const f = L.frames.get(e.id);
+    if (!f || f.done) return;
+    L.y += RXSTEP;
+    const lat = Math.max(1, (lastPoll && lastPoll.wire.latency) || 100);
+    const p = Math.min(0.85, Math.max(0.2, (e.t - f.e.t) / lat));
+    dropFrame(f, p, L.y, e.reason);
+    return;
+  }
+  case "state": {
+    const txt = g.narrow ? (SHORT[e.to] || e.to) : e.to;
+    const s = sideLabel(e.node, L.y + 2, txt, "stlab " + e.node + (e.pair === currentPair() ? " selpair" : ""), `${e.node}: ${e.from} → ${e.to}\n${e.pair}`);
+    s.grp.setAttribute("data-pair", e.pair);
+    const bb = { w: txt.length * 6.1 + 6, h: 13 };
+    const xs = e.node === "A" ? g.xA : g.xB;
+    const rx = e.node === "A" ? xs - 4 - bb.w + 1 : xs + 3;
+    const r = el("rect", { x: rx, y: s.y - 6, width: bb.w, height: bb.h, rx: 3 }, s.grp);
+    s.grp.insertBefore(r, s.t);
+    return;
+  }
+  case "log":
+    if (!e.note) return;
+    {
+      const txt = { rto: "RTO 切れ", fast: "fast retx", probe: "probe" }[e.note];
+      sideLabel(e.node, L.y + 2, "⚠ " + txt, "note", e.msg);
+    }
+    return;
+  }
+}
+
+function setLine(f, x2, y2) {
+  for (const ln of [f.line, f.hit]) { ln.setAttribute("x2", x2); ln.setAttribute("y2", y2); }
+}
+function dropFrame(f, p, y1, reason) {
+  const x = f.x1 + (f.x2 - f.x1) * p;
+  setLine(f, x, y1);
+  f.grp.classList.remove("flight");
+  f.grp.classList.add("dropped");
+  const s = 5;
+  el("path", { class: "x", d: `M${x - s},${y1 - s}L${x + s},${y1 + s}M${x + s},${y1 - s}L${x - s},${y1 + s}` }, f.grp);
+  const t = el("text", { class: "dtag", x: x + (f.x2 > f.x1 ? 8 : -8), y: y1 + 4, "text-anchor": f.x2 > f.x1 ? "start" : "end" }, f.grp);
+  t.textContent = reason === "manual" ? "手動" : reason === "queue" ? "キュー溢れ" : "損失";
+  f.done = true;
+}
+
+// ケーブル上のフレームを進める (破線の矢印が伸びる)
+function animateInflight(now, wire) {
+  if (wire.paused) return;
+  const lat = Math.max(1, wire.latency);
+  for (const f of L.frames.values()) {
+    if (f.done) continue;
+    const p = Math.min(1, Math.max(0.05, (now - f.e.t) / lat));
+    setLine(f, f.x1 + (f.x2 - f.x1) * p, f.y0 + (L.y + RXSTEP - f.y0) * p);
+  }
+}
+
+$("seqsvg").addEventListener("click", (ev) => {
+  const g = ev.target.closest(".fr");
+  if (!g) return;
+  selectFrame(Number(g.getAttribute("data-id")));
+});
+
+function selectFrame(id) {
+  selId = id;
+  for (const n of L.svg.querySelectorAll(".fr.sel")) n.classList.remove("sel");
+  const f = L.frames.get(id);
+  if (f) f.grp.classList.add("sel");
+  renderInspector(id);
+  if (f && f.e.pair && pairs.has(f.e.pair)) { selPair = f.e.pair; $("pairsel").value = selPair; renderFSM(); markPair(); }
+}
+
+// ---------------------------------------------------------------------------
+// インスペクタ
+function renderInspector(id) {
+  const js = window.mininet.frame(id);
+  if (!js) { $("insp").innerHTML = '<div class="empty">フレームが見つかりません</div>'; return; }
+  const d = JSON.parse(js);
+  const bytes = d.hex.match(/../g) || [];
+  const layerOf = new Array(bytes.length).fill(-1);
+  d.layers.forEach((l, i) => { for (let b = l.start; b < l.end && b < bytes.length; b++) layerOf[b] = i; });
+  const cls = (i) => (i < 0 ? "" : d.layers[i].name === "Padding" ? "Lpad" : "L" + Math.min(i, 4));
+  let meta = `<span class="badge">#${d.id}</span><span>${d.dir === "AB" ? "A → B" : "B → A"}</span><span>${d.len} bytes</span>` +
+    `<span>送信 ${d.t.toFixed(1)} ms</span>`;
+  if (d.drop) meta += `<span class="badge err">捨てられた (${d.reason === "manual" ? "手動" : d.reason === "queue" ? "キュー溢れ" : "損失"})</span>`;
+  else if (d.trx) meta += `<span>到着 ${d.trx.toFixed(1)} ms</span>`;
+  else meta += `<span class="badge">ケーブル上</span>`;
+  if (d.retx) meta += `<span class="badge" style="color:var(--warn)">↻ 再送</span>`;
+  let tree = "";
+  d.layers.forEach((l, i) => {
+    tree += `<details open data-l="${i}"><summary><span class="sw ${cls(i)}"></span><b>${esc(l.name)}</b><span class="muted">${esc(l.summary)}</span> <span class="muted">[${l.start}..${l.end})</span></summary>`;
+    if (l.fields && l.fields.length) {
+      tree += '<table class="kv">';
+      for (const f of l.fields) tree += `<tr data-s="${f.start}" data-e="${f.end}"><th>${esc(f.name)}</th><td>${esc(f.value)}</td><td class="muted" style="white-space:nowrap">${f.end - f.start > 1 ? f.start + "–" + (f.end - 1) : f.start}</td></tr>`;
+      tree += "</table>";
+    }
+    tree += "</details>";
+  });
+  const per = $("insp").clientWidth < 520 ? 8 : 16;
+  let hex = "";
+  for (let r = 0; r < bytes.length; r += per) {
+    let line = `<span class="off">${r.toString(16).padStart(4, "0")}</span>  `, asc = "";
+    for (let i = r; i < r + per; i++) {
+      if (i < bytes.length) {
+        line += `<span class="b ${cls(layerOf[i])}" data-i="${i}">${bytes[i]}</span>` + (i % 8 === 7 ? "  " : " ");
+        const c = parseInt(bytes[i], 16);
+        asc += `<span class="b ${cls(layerOf[i])}" data-i="${i}">${c >= 0x20 && c < 0x7f ? esc(String.fromCharCode(c)) : "."}</span>`;
+      } else line += "   " + (i % 8 === 7 ? " " : "");
+    }
+    hex += line + " " + asc + "\n";
+  }
+  $("insp").innerHTML = `<div class="meta">${meta}</div><div class="mono" style="font-size:12px;margin-bottom:6px">${esc(d.label)}</div>` +
+    `<div class="insp-wrap"><div class="tree">${tree}</div><div><div class="hex" id="hexdump">${hex}</div></div></div>`;
+}
+function hiBytes(s, e) {
+  for (const n of document.querySelectorAll("#hexdump .hi")) n.classList.remove("hi");
+  for (const n of document.querySelectorAll("#hexdump span.b")) {
+    const i = Number(n.dataset.i);
+    if (i >= s && i < e) n.classList.add("hi");
+  }
+}
+$("insp").addEventListener("mouseover", (ev) => {
+  const tr = ev.target.closest("tr[data-s]");
+  if (tr) return hiBytes(Number(tr.dataset.s), Number(tr.dataset.e));
+  const sm = ev.target.closest("summary");
+  if (sm) { const m = sm.textContent.match(/\[(\d+)\.\.(\d+)\)/); if (m) hiBytes(Number(m[1]), Number(m[2])); }
+});
+$("insp").addEventListener("mouseleave", () => hiBytes(0, 0));
+
+// ---------------------------------------------------------------------------
+// TCP 状態機械
+const BOX = { w: 96, h: 24 };
+const POS = {
+  CLOSED: [180, 20], LISTEN: [62, 74], SYN_SENT: [298, 74], SYN_RCVD: [62, 134],
+  ESTABLISHED: [180, 190], FIN_WAIT_1: [62, 252], CLOSE_WAIT: [298, 252],
+  FIN_WAIT_2: [62, 318], CLOSING: [180, 300], LAST_ACK: [298, 318],
+  TIME_WAIT: [120, 390], CLOSED_END: [298, 390],
+};
+const EDGES = [
+  ["CLOSED", "LISTEN", "listen"], ["CLOSED", "SYN_SENT", "送 SYN"], ["LISTEN", "SYN_RCVD", "受 SYN 送 SYN+ACK"],
+  ["SYN_SENT", "ESTABLISHED", "受 SYN+ACK 送 ACK"], ["SYN_RCVD", "ESTABLISHED", "受 ACK"],
+  ["ESTABLISHED", "FIN_WAIT_1", "close 送 FIN"], ["ESTABLISHED", "CLOSE_WAIT", "受 FIN 送 ACK"],
+  ["FIN_WAIT_1", "FIN_WAIT_2", "受 ACK"], ["FIN_WAIT_1", "CLOSING", "受 FIN"], ["FIN_WAIT_2", "TIME_WAIT", "受 FIN 送 ACK"],
+  ["CLOSING", "TIME_WAIT", "受 ACK"], ["CLOSE_WAIT", "LAST_ACK", "close 送 FIN"], ["LAST_ACK", "CLOSED_END", "受 ACK"],
+  ["TIME_WAIT", "CLOSED_END", "2MSL"],
+];
+function boxEdgePoint(name, tx, ty) {
+  const [cx, cy] = POS[name];
+  const dx = tx - cx, dy = ty - cy;
+  const sx = BOX.w / 2 / Math.abs(dx || 1e-9), sy = BOX.h / 2 / Math.abs(dy || 1e-9);
+  const s = Math.min(sx, sy);
+  return [cx + dx * s, cy + dy * s];
+}
+function edgeName(a, b, first) {
+  // CLOSED は始点 (上) と終点 (下) を分けて描く
+  const fa = a === "CLOSED" ? (first ? "CLOSED" : "CLOSED_END") : a;
+  const fb = b === "CLOSED" ? "CLOSED_END" : b;
+  return [fa, fb];
+}
+function renderFSM() {
+  const svg = $("fsmsvg");
+  const pair = currentPair();
+  const h = pairs.get(pair) || { A: [], B: [] };
+  const used = { A: new Set(), B: new Set() }, visited = { A: new Set(), B: new Set() }, cur = { A: null, B: null };
+  const extra = [];
+  for (const n of ["A", "B"]) {
+    h[n].forEach((tr, i) => {
+      const [a, b] = edgeName(tr.from, tr.to, i === 0);
+      used[n].add(a + ">" + b);
+      visited[n].add(a); visited[n].add(b);
+      cur[n] = b;
+      if (!EDGES.some((e) => e[0] === a && e[1] === b) && !extra.some((e) => e[0] === a && e[1] === b)) extra.push([a, b, ""]);
+    });
+  }
+  let s = `<defs><marker id="fa" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L8,4L0,8z"/></marker></defs>`;
+  for (const [a, b, lab] of EDGES.concat(extra)) {
+    const [p, q] = [POS[a], POS[b]];
+    const [x1, y1] = boxEdgePoint(a, q[0], q[1]), [x2, y2] = boxEdgePoint(b, p[0], p[1]);
+    const k = a + ">" + b;
+    const c = "ed" + (used.A.has(k) ? " eA" : "") + (used.B.has(k) && !used.A.has(k) ? " eB" : "") + (EDGES.some((e) => e[0] === a && e[1] === b) ? "" : " extra");
+    s += `<line class="${c}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" marker-end="url(#fa)"/>`;
+    if (lab) {
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      const anchor = Math.abs(x2 - x1) < 4 ? "start" : "middle";
+      s += `<text class="edl" x="${(mx + (anchor === "start" ? 4 : 0)).toFixed(1)}" y="${(my - 3).toFixed(1)}" text-anchor="${anchor}">${esc(lab)}</text>`;
+    }
+  }
+  for (const name in POS) {
+    const [cx, cy] = POS[name];
+    let c = "bx";
+    for (const n of ["A", "B"]) { if (visited[n].has(name)) c += " v" + n; if (cur[n] === name) c += " cur" + n; }
+    s += `<g class="${c}"><rect x="${cx - BOX.w / 2}" y="${cy - BOX.h / 2}" width="${BOX.w}" height="${BOX.h}" rx="5"/><text x="${cx}" y="${cy}">${name === "CLOSED_END" ? "CLOSED" : name}</text>`;
+    if (cur.A === name) s += `<g class="tagA"><circle cx="${cx - BOX.w / 2}" cy="${cy - BOX.h / 2}" r="7"/><text x="${cx - BOX.w / 2}" y="${cy - BOX.h / 2}">A</text></g>`;
+    if (cur.B === name) s += `<g class="tagB"><circle cx="${cx + BOX.w / 2}" cy="${cy - BOX.h / 2}" r="7"/><text x="${cx + BOX.w / 2}" y="${cy - BOX.h / 2}">B</text></g>`;
+    s += "</g>";
+  }
+  svg.innerHTML = s;
+  let hist = "";
+  if (!pair) hist = '<span class="muted">まだ TCP コネクションがありません。「TCP echo」を押してください。</span>';
+  else {
+    hist = `<div class="muted">${esc(pair)}</div>`;
+    for (const n of ["A", "B"]) {
+      if (!h[n].length) { hist += `<div class="${n}">${n}: (なし)</div>`; continue; }
+      hist += `<div class="${n}">${n}: ${esc([h[n][0].from].concat(h[n].map((x) => x.to)).join(" → "))}</div>`;
+    }
+  }
+  $("hist").innerHTML = hist;
+}
+function currentPair() { return selPair || latestPair; }
+function markPair() {
+  const p = currentPair();
+  for (const n of L.svg.querySelectorAll(".stlab")) n.classList.toggle("selpair", n.getAttribute("data-pair") === p);
+  for (const n of document.querySelectorAll(".conn")) n.classList.toggle("current", n.dataset.pair === p);
+}
+$("pairsel").addEventListener("change", () => { selPair = $("pairsel").value; renderFSM(); markPair(); });
+
+// ---------------------------------------------------------------------------
+// ノードカード
+function pairOf(ip1, p1, ip2, p2) {
+  let a = `${ip1}:${p1}`, b = `${ip2}:${p2}`;
+  if (b < a) [a, b] = [b, a];
+  return a + " ⇄ " + b;
+}
+function cell(key, val) {
+  const now = performance.now();
+  if (prevVals.has(key) && prevVals.get(key) !== val) changedAt.set(key, now);
+  prevVals.set(key, val);
+  const ch = now - (changedAt.get(key) || -1e9) < 900;
+  return `<td${ch ? ' class="changed"' : ""}>${esc(val)}</td>`;
+}
+function renderNode(name, snap) {
+  const role = name === "A" ? "サーバ (TCP/UDP echo :7, HTTP :80)" : "クライアント";
+  let h = `<h2>ノード ${name} <span class="role">— ${role}</span></h2><div class="addr">${snap.ip} / ${snap.mac}</div>`;
+  const ls = (snap.listen || []).join(", "), us = (snap.udp || []).join(", ");
+  h += `<div class="mono" style="font-size:12px">TCP LISTEN: ${ls || "-"}　UDP: ${us || "-"}</div>`;
+  h += "<h3>ARP キャッシュ</h3>";
+  if (!snap.arp || !snap.arp.length) h += '<div class="empty">(空)</div>';
+  else {
+    h += '<table class="kv"><tr><th>IP</th><th>MAC</th></tr>';
+    for (const a of snap.arp) h += `<tr><td>${a.ip}</td>${cell(name + "arp" + a.ip, a.mac + (a.pending ? ` (待ち ${a.pending})` : ""))}</tr>`;
+    h += "</table>";
+  }
+  h += "<h3>TCP コネクション</h3>";
+  if (!snap.tcp || !snap.tcp.length) h += '<div class="empty">(なし)</div>';
+  for (const c of snap.tcp || []) {
+    const pair = pairOf(snap.ip, c.lport, c.rip, c.rport);
+    const k = name + pair;
+    const relS = (v) => String((v - c.iss) >>> 0);
+    const relR = (v) => (c.state === "SYN_SENT" ? "-" : String((v - c.irs) >>> 0));
+    h += `<div class="conn${pair === currentPair() ? " current" : ""}" data-pair="${esc(pair)}">` +
+      `<div class="hd"><span>:${c.lport} ⇄ ${c.rip}:${c.rport}</span><span class="badge st">${c.state}</span></div>` +
+      '<table class="kv">' +
+      `<tr><th>snd.una</th>${cell(k + "una", relS(c.sndUna))}<th>snd.nxt</th>${cell(k + "nxt", relS(c.sndNxt))}</tr>` +
+      `<tr><th>rcv.nxt</th>${cell(k + "rnxt", relR(c.rcvNxt))}<th>相手 win</th>${cell(k + "swnd", String(c.sndWnd))}</tr>` +
+      `<tr><th>未ACK</th>${cell(k + "una2", c.unacked + " B")}<th>再送Q</th>${cell(k + "rq", c.retxSegs + " seg")}</tr>` +
+      `<tr><th>未送信</th>${cell(k + "uns", c.unsent + " B")}<th>自 win</th>${cell(k + "rwnd", String(c.rcvWnd))}</tr>` +
+      `<tr><th>RTO</th>${cell(k + "rto", Math.round(c.rto) + " ms" + (c.timer ? " ⏱" : ""))}<th>retries</th>${cell(k + "ret", String(c.retries))}</tr>` +
+      `<tr><th>dupACK</th>${cell(k + "dup", String(c.dupAcks))}<th>FIN</th>${cell(k + "fin", (c.finSent ? "送" : "-") + "/" + (c.peerFin ? "受" : "-"))}</tr>` +
+      "</table></div>";
+  }
+  return h;
+}
+for (const id of ["nodeA", "nodeB"]) {
+  $(id).addEventListener("click", (ev) => {
+    const c = ev.target.closest(".conn");
+    if (!c) return;
+    selPair = c.dataset.pair;
+    if (!pairs.has(selPair)) pairs.set(selPair, { A: [], B: [] });
+    updatePairSelect();
+    $("pairsel").value = selPair;
+    renderFSM(); markPair();
+  });
+}
+function updatePairSelect() {
+  const sel = $("pairsel"), v = sel.value;
+  const keys = [...pairs.keys()].reverse();
+  if (sel.options.length === keys.length + 1) return;
+  sel.innerHTML = '<option value="">(最新のコネクションを追従)</option>' + keys.map((k) => `<option>${esc(k)}</option>`).join("");
+  sel.value = v;
+}
+
+// ---------------------------------------------------------------------------
+// ログ
+const logLines = [];
+function logLine(s) {
+  logLines.push(s);
+  if (logLines.length > 400) logLines.splice(0, logLines.length - 400);
+}
+
+// ---------------------------------------------------------------------------
+// poll
+let fsmDirty = true;
+function handleEvent(e) {
+  events.push(e);
+  layoutEvent(e);
+  const t = (e.t / 1000).toFixed(3);
+  if (e.k === "state") {
+    if (!pairs.has(e.pair)) pairs.set(e.pair, { A: [], B: [] });
+    pairs.get(e.pair)[e.node].push({ from: e.from, to: e.to, t: e.t });
+    latestPair = e.pair;
+    fsmDirty = true;
+  } else if (e.k === "log") {
+    logLine(`${t} [${e.node}] ${e.msg}`);
+  } else if (e.k === "op") {
+    const nm = OPNAMES[e.name] || e.name;
+    if (e.status === "start") logLine(`${t} ▶ ${nm} ${e.msg || ""}`);
+    else {
+      logLine(`${t} ${e.status === "ok" ? "✔" : "✘"} ${nm}\n${e.msg}`);
+      const st = $("opstatus");
+      st.className = e.status === "ok" ? "ok" : "err";
+      st.textContent = `${nm}: ${e.msg}`;
+    }
+  }
+}
+
+function poll() {
+  let r;
+  try { r = JSON.parse(window.mininet.poll(next)); } catch (err) { showErr("poll: " + err); return; }
+  lastPoll = r;
+  const scroller = $("seqscroll");
+  const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 40;
+  const logEl = $("log");
+  const logAtBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
+  const nlog = logLines.length;
+  for (const e of r.events) handleEvent(e);
+  next = r.next;
+  finishLayout();
+  animateInflight(r.now, r.wire);
+  if (r.events.length && ($("autoscroll").checked || atBottom)) scroller.scrollTop = scroller.scrollHeight;
+  if (logLines.length !== nlog || r.events.length) {
+    logEl.textContent = logLines.join("\n");
+    if (logAtBottom) logEl.scrollTop = logEl.scrollHeight;
+  }
+  $("nodeA").innerHTML = renderNode("A", r.A);
+  $("nodeB").innerHTML = renderNode("B", r.B);
+  if (fsmDirty) { updatePairSelect(); renderFSM(); markPair(); fsmDirty = false; }
+  const w = r.wire;
+  $("inflight").textContent = "ケーブル上 " + w.inflight;
+  $("dropnext").classList.toggle("on", w.dropNext);
+  $("pause").classList.toggle("on", w.paused);
+  $("pause").textContent = w.paused ? "再開" : "ケーブル一時停止";
+  $("step").disabled = $("drophead").disabled = !(w.paused && w.inflight > 0);
+  $("counts").textContent = `フレーム ${r.frames}`;
+  if (r.events.length >= 3000) setTimeout(poll, 0);
+}
+
+// ---------------------------------------------------------------------------
+// 操作
+function applySettings() {
+  window.mininet.setLoss(Number($("loss").value) / 100);
+  window.mininet.setLatency(Number($("lat").value));
+}
+function bind() {
+  for (const b of document.querySelectorAll("button[data-op]")) {
+    b.addEventListener("click", () => {
+      const op = b.dataset.op;
+      const arg = op === "tcp-echo" ? $("echomsg").value : op === "bulk" ? String($("bulkkb").value) : "";
+      window.mininet.run(op, arg);
+    });
+  }
+  $("loss").addEventListener("input", () => { $("lossv").textContent = $("loss").value + "%"; applySettings(); });
+  $("lat").addEventListener("input", () => { $("latv").textContent = $("lat").value + " ms"; applySettings(); });
+  $("dropnext").addEventListener("click", () => window.mininet.dropNext());
+  $("pause").addEventListener("click", () => window.mininet.setPaused(!(lastPoll && lastPoll.wire.paused)));
+  $("step").addEventListener("click", () => window.mininet.step());
+  $("drophead").addEventListener("click", () => window.mininet.dropHead());
+  $("pcapbtn").addEventListener("click", () => {
+    const u8 = window.mininet.pcap($("pcapdrop").checked);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([u8], { type: "application/vnd.tcpdump.pcap" }));
+    a.download = "mininet.pcap";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  $("reset").addEventListener("click", () => {
+    window.mininet.reset();
+    applySettings();
+    next = 0; events = []; selId = 0; selPair = ""; latestPair = "";
+    pairs.clear(); prevVals.clear(); changedAt.clear(); logLines.length = 0;
+    $("log").textContent = "";
+    $("insp").innerHTML = '<div class="empty">シーケンス図の矢印をクリックしてください。</div>';
+    $("opstatus").className = "muted"; $("opstatus").textContent = "リセットしました。";
+    $("pairsel").innerHTML = '<option value="">(最新のコネクションを追従)</option>';
+    resetLayout(); fsmDirty = true;
+  });
+  let lastW = 0;
+  new ResizeObserver(() => {
+    const w = $("seqscroll").clientWidth;
+    if (Math.abs(w - lastW) > 8) { lastW = w; resetLayout(); if (lastPoll) animateInflight(lastPoll.now, lastPoll.wire); }
+  }).observe($("seqscroll"));
+}
+
+// ---------------------------------------------------------------------------
+async function start() {
+  const go = new Go();
+  let inst;
+  try {
+    const resp = fetch("main.wasm");
+    try {
+      inst = (await WebAssembly.instantiateStreaming(resp, go.importObject)).instance;
+    } catch (e) {
+      inst = (await WebAssembly.instantiate(await (await fetch("main.wasm")).arrayBuffer(), go.importObject)).instance;
+    }
+  } catch (e) {
+    $("loading").hidden = true;
+    showErr("main.wasm を読み込めません: " + e + " (web/net/build.sh でビルドしてください)");
+    return;
+  }
+  go.run(inst);
+  $("loading").hidden = true;
+  $("app").hidden = false;
+  bind();
+  applySettings();
+  resetLayout();
+  renderFSM();
+  poll();
+  setInterval(poll, 100);
+}
+start();
+</script>
+</body>
+</html>

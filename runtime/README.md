@@ -26,18 +26,28 @@ go run . examples/async_fs.js --allow-read=examples/data --allow-write=examples/
 
 ### ファイル構成
 
+コアは `minirt/`（インポート可能なパッケージ）。CLI はその薄いラッパです。
+
 | ファイル | 役割 |
 |---|---|
-| `main.go` | CLI 引数の解析、`Permissions` の構築、終了コード |
-| `runtime.go` | goja の生成、各 API の組み込み、ブートストラップ JS、エラー変換、未処理 rejection 検出 |
-| `eventloop.go` | イベントループ本体（タイマーヒープ、完了キュー、タイムアウト） |
-| `permissions.go` | deny-by-default の検査、パス正規化（シンボリックリンク / `..` 解決） |
-| `ops_fs.go` | `Sandbox.readTextFile` / `writeTextFile`（+ `Sync` 版） |
-| `ops_net.go` | `fetch(url, {method, headers, body})` |
-| `ops_env.go` | `Sandbox.env.get` / `has` |
-| `ops_timers.go` | `setTimeout` / `setInterval` / `clear*` |
-| `console.go` | `console.log/info/debug`（stdout）, `console.error/warn`（stderr）と簡易 inspect |
-| `module.go` | CommonJS 風 `require("./x.js")`（読み取り権限で制御） |
+| `main.go` | CLI 引数の解析、`Permissions` の構築、終了コード（`package main`） |
+| `minirt/runtime.go` | goja の生成、各 API の組み込み、ブートストラップ JS、エラー変換、未処理 rejection 検出、`Load` / `Step` |
+| `minirt/eventloop.go` | イベントループ本体（タイマーヒープ、完了キュー、タイムアウト、仮想時計とステップ実行、スナップショット） |
+| `minirt/trace.go` | イベントループのトレース（タスク・マイクロタスク・タイマー・op・権限・console） |
+| `minirt/permissions.go` | deny-by-default の検査、パス正規化（シンボリックリンク / `..` 解決） |
+| `minirt/fs.go`, `memfs.go` | ファイルシステムの抽象 `FS`。`OSFS`（実ディスク）と `MemFS`（メモリ上、symlink もカーネルと同じ解決順序） |
+| `minirt/net.go`, `net_http.go` | ネットワークの抽象 `Network`。`HTTPNetwork`（net/http、wasm ビルドからは除外）と `FakeNetwork`（決まった URL に遅延付きで応答） |
+| `minirt/ops_fs.go` | `Sandbox.readTextFile` / `writeTextFile`（+ `Sync` 版） |
+| `minirt/ops_net.go` | `fetch(url, {method, headers, body})` |
+| `minirt/ops_env.go` | `Sandbox.env.get` / `has`（`Options.LookupEnv` 経由） |
+| `minirt/ops_timers.go` | `setTimeout` / `setInterval` / `clear*` |
+| `minirt/console.go` | `console.log/info/debug`（stdout）, `console.error/warn`（stderr）と簡易 inspect |
+| `minirt/module.go` | CommonJS 風 `require("./x.js")`（読み取り権限で制御） |
+| `playground/` | ブラウザ版の世界: 仮想 FS（`examples/` を同じ相対パスで `/app` に配置）、偽ネットワーク、偽の環境変数、仮想時計、トレース |
+| `examples/embed.go` | 例のスクリプトとデータを `embed` する（ブラウザ版のプリセットと仮想 FS の中身） |
+| `cmd/wasm/` | `GOOS=js` 用の main。`globalThis.minirt` に `load/step/run/files/examples/defaults` を公開 |
+
+ブラウザ版は `web/runtime/`（`web/runtime/build.sh` でビルド）。
 
 ### 公開 API
 
@@ -171,6 +181,30 @@ goja は JS のオブジェクトを普通の Go のヒープに確保し、Go �
 - **本当に必要ならプロセス分離**: ランタイムを子プロセスとして起動し、`setrlimit(RLIMIT_AS)`、
   Linux なら cgroups の `memory.max` をかける。これが唯一信頼できる方法です。
 
+### 仮想時計とトレース（`--virtual-time`, `--trace`）
+
+- `Options.VirtualClock`（CLI では `--virtual-time`）: `Date.now()` とタイマーは仮想時刻。やることが無ければ次の期限まで一気に進む。
+  op の処理は開始時にその場で実行し、結果を「開始時刻 + 遅延（`FS.Latency()` / `FetchResponse.Latency`）」に届ける。
+  タイマーと op 完了は (期限, 登録順) の一つの順序で選ぶので、何度実行しても同じ順序。`Runtime.Step()` は
+  マクロタスク 1 個 + そのマイクロタスクだけを実行する。`--timeout` は仮想時刻の上限になり、加えて 1 ステップごとの
+  実時間ウォッチドッグとしても働く（`for(;;){}` 対策）。
+- `Options.Trace`（CLI では `--trace` で stderr に JSON Lines）: `task.start / task.body.end / task.end`,
+  `micro.register / micro.queued / micro.run / micro.done / micro.drop`, `timer.set / fire / clear`,
+  `op.start / op.done`, `perm`（正規化後のパス付き。スクリプトには見せない）, `console`, `clock`, `exit`。
+
+**マイクロタスクの観測は近似です。** goja のジョブキューには「積まれた」ことを知るフックが無いので、
+`AsyncContextTracker`（反応の登録時 `Grab` と、ハンドラ実行の前後 `Resumed`/`Exited`）と
+`Promise.prototype.then` の差し替えで観測しています。
+
+- `queueMicrotask` と解決済み Promise への `.then`: 登録 = キュー投入なので正確（`state: "queued"`）。
+- 未解決 Promise への `.then`: `"waiting"`。解決したことは次に制御が戻った時点（次のジョブの直前・タスク本体の終わり）で
+  `micro.queued` として報告する。FIFO 上の位置は正しいが瞬間は遅れる。
+- `await`: goja は内部の then を直接呼ぶので待っている値が見えない。`"unknown"` のまま、走った時点で確定。
+  位置情報も関数の先頭しか取れないので関数名だけ。再開後の `await` は「#N の続き」と表示。
+- ハンドラを持たない反応（`.catch(f)` の成功側など）はタスク終了時に `micro.drop`。thenable 解決などの内部ジョブは見えない。
+- トレース有効時だけ `Promise.prototype.then` と `queueMicrotask` を差し替え、メインスクリプト末尾に本体終了の目印呼び出しを足す。
+  トレース無効（通常の CLI）では何も変えない。
+
 ---
 
 ## 5. 脅威モデルと限界
@@ -215,7 +249,10 @@ go run . examples/async_fs.js --allow-read=examples/data --allow-write=examples/
 go run . examples/sandbox_escape.js --allow-read=examples/data --timeout=2s   # 終了コード 124
 go run . examples/fetch.js --allow-net=example.com
 
-go vet ./... && go test ./...
+go run . examples/event_loop_quiz.js --virtual-time --trace 2>trace.jsonl
+
+go vet ./... && go test -race ./...
+GOOS=js GOARCH=wasm go vet ./...
 ```
 
 `examples/data/link_to_etc` は `/etc` へのシンボリックリンクで、`sandbox_escape.js` のシンボリックリンク脱出テストに使っています。
@@ -267,6 +304,12 @@ error: execution timed out
 
 ### テスト
 
+- `minirt/memfs_test.go`: `MemFS` が permissions_test と同じケース（`link/..` のカーネル意味論など）で実ディスクと同じ判定をすること。
+- `minirt/virtual_test.go`: 仮想時計（10 分のタイマーが一瞬で終わる、仮想タイムアウト、busy loop のウォッチドッグ、op 遅延と
+  タイマーの順序）、トレースを有効にしても順序が変わらないこと、トレースの形、正規化パスがスクリプトに漏れないこと、
+  偽ネットワークのリダイレクト再検査（実時間モード、ワーカー goroutine 上）。
+- `playground/playground_test.go`: ブラウザ版の世界で `timers.js` の出力が CLI と同一、`async_fs.js`・`sandbox_escape.js`
+  （11 件すべて拒否・正規化パス・終了コード 124）・偽 fetch・クイズ例・1 ステップ = 1 タスク。
 - `permissions_test.go`: `..` 脱出、シンボリックリンク脱出、`link/..` のカーネル意味論、`data` と `data2` の取り違え、
   新規ファイル書き込み、デフォルト拒否、ネットワークのホスト/ポート照合。
 - `eventloop_test.go`: マイクロタスク vs タイマーの順序、遅延と clear、goroutine op の完了順序、

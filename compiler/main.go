@@ -1,7 +1,7 @@
 // minicc: minilang → RISC-V 64 (RV64IM) ネイティブコンパイラ。
 //
 //	go run . emit  prog.lang              アセンブリを標準出力へ
-//	go run . build prog.lang [-o prog]    .s を出力し ../asm でランタイムとリンク
+//	go run . build prog.lang [-o prog]    .s を出力しランタイムとリンク (rvasm をライブラリとして使用)
 //	go run . run   prog.lang              build して ../emu で実行
 package main
 
@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"minicc/minicc"
+	"rvasm/rvasm"
 )
 
 func usage() {
@@ -31,19 +34,20 @@ func main() {
 	}
 	src, err := os.ReadFile(file)
 	check(err)
-	asm, err := Compile(string(src))
+	res, err := minicc.Compile(string(src))
 	check(err)
+	asm := res.Asm
 	switch cmd {
 	case "emit":
 		fmt.Print(asm)
 	case "build":
-		check(Build(asm, out, goRun("asm")))
+		check(Build(asm, out))
 	case "run":
 		tmp, err := os.MkdirTemp("", "minicc")
 		check(err)
 		defer os.RemoveAll(tmp)
 		prog := filepath.Join(tmp, "prog")
-		check(Build(asm, prog, goRun("asm")))
+		check(Build(asm, prog))
 		c := goRun("emu")("run", prog)
 		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := c.Run(); err != nil {
@@ -65,16 +69,7 @@ func check(err error) {
 	}
 }
 
-// Compile はソースをアセンブリ (ユーザコード部分。runtime.s は別) に変換する。
-func Compile(src string) (string, error) {
-	prog, err := Parse(src)
-	if err != nil {
-		return "", err
-	}
-	return Generate(prog, src)
-}
-
-// srcDir は compiler/ ディレクトリ (runtime/runtime.s がある場所)。カレントディレクトリを仮定する。
+// srcDir は compiler/ ディレクトリ。カレントディレクトリを仮定する。
 func srcDir() string {
 	if d := os.Getenv("MINICC_DIR"); d != "" {
 		return d
@@ -83,7 +78,7 @@ func srcDir() string {
 	return d
 }
 
-// toolDir は隣の ../asm や ../emu。
+// toolDir は隣の ../emu や ../lang。
 func toolDir(name string) string { return filepath.Join(srcDir(), "..", name) }
 
 // goRun は隣のプロジェクトを `go run .` で起動するコマンドを作る。
@@ -95,16 +90,14 @@ func goRun(name string) func(args ...string) *exec.Cmd {
 	}
 }
 
-// Build は out.s を書き出し、runtime.s と一緒にアセンブラ (../asm) でアセンブル+リンクする。
-func Build(asm, out string, assembler func(args ...string) *exec.Cmd) error {
-	out, _ = filepath.Abs(out)
-	sfile := out + ".s"
-	if err := os.WriteFile(sfile, []byte(asm), 0o644); err != nil {
+// Build は out.s を書き出し、runtime.s と一緒にアセンブル+リンクする (rvasm をライブラリとして使う)。
+func Build(asm, out string) error {
+	if err := os.WriteFile(out+".s", []byte(asm), 0o644); err != nil {
 		return err
 	}
-	rt := filepath.Join(srcDir(), "runtime", "runtime.s")
-	if msg, err := assembler("build", sfile, rt, "-o", out).CombinedOutput(); err != nil {
-		return fmt.Errorf("asm failed: %v\n%s", err, msg)
+	exe, err := rvasm.Build(minicc.AsmSources(filepath.Base(out)+".s", asm)...)
+	if err != nil {
+		return err
 	}
-	return nil
+	return os.WriteFile(out, exe, 0o755)
 }

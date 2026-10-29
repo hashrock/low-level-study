@@ -10,12 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"rvcc/rvcc"
 )
 
 var update = flag.Bool("update", false, "examples/*.out を rvcc の出力で書き換える")
 
-// ../asm と ../emu を一度だけ go build しておく (毎回 go run するより速い)
-var asmBin, emuBin, binErr string
+// ../emu を一度だけ go build しておく (毎回 go run するより速い)。
+// コンパイル・アセンブル・リンクは rvcc / rvasm パッケージでプロセス内で行う。
+var emuBin, binErr string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -23,13 +26,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	asmBin, emuBin = filepath.Join(dir, "rvasm"), filepath.Join(dir, "rvemu")
-	for name, bin := range map[string]string{"asm": asmBin, "emu": emuBin} {
-		c := exec.Command("go", "build", "-o", bin, ".")
-		c.Dir = toolDir(name)
-		if out, err := c.CombinedOutput(); err != nil {
-			binErr = fmt.Sprintf("cannot build ../%s: %v\n%s", name, err, out)
-		}
+	emuBin = filepath.Join(dir, "rvemu")
+	c := exec.Command("go", "build", "-o", emuBin, ".")
+	c.Dir = toolDir("emu")
+	if out, err := c.CombinedOutput(); err != nil {
+		binErr = fmt.Sprintf("cannot build ../emu: %v\n%s", err, out)
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -49,7 +50,7 @@ func run(t *testing.T, files []string, opt int, args ...string) result {
 		t.Skip(binErr)
 	}
 	prog := filepath.Join(t.TempDir(), "prog")
-	if err := Build(files, prog, opt, func(a ...string) *exec.Cmd { return exec.Command(asmBin, a...) }); err != nil {
+	if err := Build(files, prog, opt); err != nil {
 		t.Fatal(err)
 	}
 	c := exec.Command(emuBin, append([]string{"run", "--stats", "--max-insts", "500000000", prog}, args...)...)
@@ -176,29 +177,6 @@ func TestMultiFile(t *testing.T) {
 	}
 }
 
-func TestErrors(t *testing.T) {
-	cases := []struct{ src, want string }{
-		{"int main() { return x; }", "undeclared identifier x"},
-		{"int main() { int a; a.b = 1; }", "member access on non-struct"},
-		{"struct s { int a; }; int main() { struct s v; return v.b; }", "no member named b"},
-		{"int main() { int a; return *a; }", "cannot dereference int"},
-		{"int f(int a); int main() { return f(1, 2); }", "wrong number of arguments"},
-		{"int main() { 1 = 2; }", "cannot assign"},
-		{"int main() { break; }", "break outside"},
-		{"void f() { return 1; }", "void function returns a value"},
-		{"int main() { unsigned x; }", "unsigned types are not supported"},
-		{"int main() { return 1 }", `expected ";"`},
-		{"int main() { int *p; long q; return p * q; }", "invalid operands to *"},
-		{"int a[x];", "undeclared identifier x"},
-	}
-	for _, c := range cases {
-		_, err := Compile("t.c", c.src, 2)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%q: got %v, want %q", c.src, err, c.want)
-		}
-	}
-}
-
 // 最適化の効果: 実行命令数を表示する (go test -v -run TestBench)。
 func TestBench(t *testing.T) {
 	for _, f := range []string{"bench/fib25.c", "examples/sieve.c", "examples/qsort.c"} {
@@ -216,11 +194,15 @@ func TestBench(t *testing.T) {
 }
 
 func TestEmitIsDeterministic(t *testing.T) {
-	a, err := CompileFile("tests/test.c", 2)
+	src, err := os.ReadFile("tests/test.c")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := CompileFile("tests/test.c", 2); a != b {
+	a, err := rvcc.Compile("test.c", string(src), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := rvcc.Compile("test.c", string(src), 2); a.Asm != b.Asm {
 		t.Error("emit output differs between runs")
 	}
 }

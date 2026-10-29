@@ -8,20 +8,40 @@
 
 ```sh
 go run . emit  examples/fib.lang              # アセンブリを表示
-go run . build examples/fib.lang -o fib       # fib.s を出力し ../asm で fib (ELF) を作る
+go run . build examples/fib.lang -o fib       # fib.s を出力し fib (ELF) を作る (../asm をライブラリとして使う)
 go run . run   examples/fib.lang              # build して ../emu で実行
 go vet ./... && go test ./...                 # examples を コンパイル→アセンブル→エミュレータ実行 して比較
 go test -run TestExamples -update .           # examples/*.out を作り直す
 ```
 
+### ライブラリとして使う (`minicc/minicc`)
+
+コンパイラ本体は `minicc/minicc` パッケージで、ファイルもサブプロセスも使いません
+(`GOOS=js GOARCH=wasm` でもそのまま動きます)。アセンブル・リンクは `../asm` の `rvasm/rvasm` を
+`go.mod` の `replace rvasm => ../asm` で直接 import しているので、ソース → ELF がメモリ上で完結します。
+
+```go
+out, err := minicc.Compile(src)            // *Output: Asm (ユーザコード部分) と Lines
+                                           //   Lines[k] = アセンブリ k+1 行目を生んだソースの行 (0 は対応なし)
+exe, err := minicc.Build("fib.lang", src)  // []byte: runtime.s とリンクした ELF
+p, err := rvasm.BuildProgram(minicc.AsmSources("fib.s", out.Asm)...)  // リスティング付きでリンク
+minicc.Runtime()                           // 埋め込みの runtime.s のソース
+```
+
+エラーは `*minicc.LangError` (`Pos.Line` `Pos.Col` `Kind` `Msg`、表示は `2:9: compile error: ...`) で返ります。
+`run` サブコマンドだけは今も `../emu` を `go run` で起動します。
+
 ## ファイル構成
+
+`main.go` (CLI) 以外は `minicc/` パッケージに、ランタイムは `minicc/runtime/` にあります。
 
 | ファイル | 行数 | 役割 |
 |---|---:|---|
-| `lexer.go` `parser.go` `ast.go` | 570 | `../lang` から**そのままコピー** (先頭にコピー元を記載) |
+| `api.go` | | 公開 API (`Compile` `Build` `AsmSources` `Runtime`)、アセンブリ行 → ソース行の対応 |
+| `lexer.go` `parser.go` `ast.go` | 570 | `../lang` から**そのままコピー** (先頭にコピー元を記載。`package` 行だけ `minicc`) |
 | `resolve.go` | 282 | 名前解決と捕捉解析: 各変数がグローバル / スロット / 箱 のどれに住むかを決める |
 | `codegen.go` | 642 | AST → アセンブリ。フレーム配置、式、制御構文、呼び出し、クロージャ生成 |
-| `main.go` | 110 | CLI (`emit` / `build` / `run`)、`../asm` `../emu` の起動 |
+| `main.go` | | CLI (`emit` / `build` / `run`)、`../emu` の起動 |
 | `runtime/runtime.s` | 1531 | ランタイム (RISC-V アセンブリ): 割り当て、表示、文字列、配列、マップ、型検査、エラー |
 | `minicc_test.go` | 155 | examples の照合、`../lang` インタプリタとの照合、エラーのテスト |
 

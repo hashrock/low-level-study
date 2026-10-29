@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>コンパイルパイプライン</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  .wide { grid-column: 1 / -1; }
+  .notes { margin: 0; padding-left: 1.2em; }
+  .notes li { margin: 2px 0; }
+  .notes code, .hint code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+  .status { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #error:empty { display: none; }
+  #error { margin: 0 0 8px; white-space: pre-wrap; }
+  label.chk { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+  input.args { flex: 1 1 12em; min-width: 0; font-family: var(--mono); }
+  input.n { width: 7em; }
+  .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+
+  /* 3 カラム: ソース → アセンブリ → 機械語 */
+  .cols { display: grid; gap: 12px; grid-template-columns: 1fr; margin-bottom: 12px; }
+  @media (min-width: 1000px) { .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.15fr); } }
+  .col { display: flex; flex-direction: column; overflow: hidden; }
+  .col h2 { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .col h2 .badge { text-transform: none; letter-spacing: 0; }
+  .box { position: relative; height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+  @media (max-width: 999px) { .box { height: 340px; } }
+  .col textarea { height: 460px; min-height: 0; margin: 0; resize: none; white-space: pre; overflow: auto; }
+  @media (max-width: 999px) { .col textarea { height: 340px; } }
+  .code { font-family: var(--mono); font-size: 12px; line-height: 18px; min-width: max-content; padding: 2px 0; }
+  .ln { white-space: pre; padding: 0 8px 0 0; cursor: pointer; display: flex; }
+  .ln .no { color: var(--muted); display: inline-block; min-width: 3.2em; text-align: right; padding-right: 8px; user-select: none; flex: none; }
+  .ln.dim { color: var(--muted); }
+  .ln.cmt { color: var(--muted); }
+  .ln.fhead { color: var(--c4); cursor: default; font-weight: bold; padding: 6px 8px 2px; border-top: 1px solid var(--border); }
+  .ln.symrow { color: var(--c4); cursor: default; }
+  .ln.hov { background: var(--panel-2); }
+  .ln.sel { background: color-mix(in srgb, var(--c4) 16%, var(--panel)); box-shadow: inset 3px 0 0 var(--c4); }
+  .ln.current { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .ln.current.sel { box-shadow: inset 3px 0 0 var(--accent), inset 6px 0 0 var(--c4); }
+  .ln.errline { background: color-mix(in srgb, var(--err) 16%, var(--panel)); box-shadow: inset 3px 0 0 var(--err); }
+  .ln.errmsg { color: var(--err); cursor: default; }
+  .code.wrap { min-width: 0; }
+  .code.wrap .ln { white-space: pre-wrap; word-break: break-all; }
+  .badge:empty { display: none; }
+  .mc .a { color: var(--muted); min-width: 7em; padding-left: 6px; }
+  .mc .w { color: var(--c6); min-width: 7.5em; }
+  .mc .d { min-width: 14em; }
+  .mc .s { color: var(--muted); padding-left: 1em; }
+  .mc .sym { color: var(--c4); }
+  .mc .rl { color: var(--c3); }
+
+  /* ビット表示 */
+  .bits { display: grid; grid-template-columns: repeat(32, minmax(0, 1fr)); gap: 0; font-family: var(--mono); font-size: 12px; min-width: 520px; }
+  .bitwrap { overflow-x: auto; padding-bottom: 4px; }
+  .bits .idx { text-align: center; color: var(--muted); font-size: 10px; }
+  .bits .b { text-align: center; padding: 4px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .bits .f { text-align: center; font-size: 11px; padding: 3px 2px; border-radius: 0 0 4px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bits .fv { text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bits .first { border-left: 2px solid var(--panel); }
+  .k-opcode { --k: var(--c1); } .k-rd { --k: var(--c2); } .k-funct3 { --k: var(--c3); } .k-rs1 { --k: var(--c4); }
+  .k-rs2 { --k: var(--c6); } .k-funct7 { --k: var(--c5); } .k-imm { --k: var(--muted); } .k-other { --k: var(--muted); }
+  .bits .b.kk, .bits .f.kk { background: color-mix(in srgb, var(--k) 20%, var(--panel)); }
+  .bits .f.kk { box-shadow: inset 0 -3px 0 var(--k); }
+  .immrow { display: flex; flex-wrap: wrap; gap: 1px; font-family: var(--mono); font-size: 12px; margin: 6px 0; }
+  .immrow span { padding: 2px 4px; border-radius: 3px; }
+  .immrow .z { color: var(--muted); background: var(--panel-2); }
+  .immrow .sx { color: var(--muted); }
+  .bitinfo { display: grid; gap: 12px; grid-template-columns: 1fr; margin-top: 10px; }
+  @media (min-width: 900px) { .bitinfo { grid-template-columns: 1fr 1fr; } }
+  .bitinfo p { margin: 4px 0; }
+
+  /* 実行 */
+  .runcols { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 1000px) { .runcols { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); } }
+  .terminal { min-height: 160px; height: 260px; }
+  .terminal .e { color: var(--c5); }
+  .terminal .sys { color: var(--muted); }
+  .scroll { max-height: 320px; overflow: auto; }
+  table.kv td.v { font-variant-numeric: tabular-nums; }
+  table.kv tr.clickable { cursor: pointer; }
+  table.kv tr.clickable:hover td { background: var(--panel-2); }
+  table.kv tr.sel td { background: color-mix(in srgb, var(--c4) 16%, var(--panel)); }
+  .pcinfo { font-family: var(--mono); font-size: 12px; margin: 6px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+  .pcinfo b { color: var(--accent); }
+
+  /* ELF */
+  .hexdump { font-family: var(--mono); font-size: 12px; line-height: 17px; max-height: 360px; overflow: auto; position: relative; white-space: pre; }
+  .hexdump .o { color: var(--muted); }
+  .r-c1 { color: var(--c1); } .r-c2 { color: var(--c2); } .r-c3 { color: var(--c3); } .r-c4 { color: var(--c4); }
+  .r-c5 { color: var(--c5); } .r-c6 { color: var(--c6); } .r-muted, .r-pad { color: var(--muted); } .r-pad { opacity: .55; }
+  .hexdump .selb { background: color-mix(in srgb, var(--c4) 30%, var(--panel)); color: var(--text); }
+  .legend { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .legend button { font-size: 12px; padding: 1px 8px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; margin-right: 4px; vertical-align: -1px; }
+  details summary { cursor: pointer; color: var(--muted); margin: 6px 0; }
+
+  /* 比較 (横棒) */
+  .bars { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; align-items: center; margin: 6px 0 14px; }
+  .bars .lbl { font-size: 13px; white-space: nowrap; }
+  .bars .track { position: relative; height: 22px; display: flex; align-items: center; gap: 8px; }
+  .bars .bar { height: 18px; border-radius: 0 4px 4px 0; min-width: 2px; background: var(--bc); transition: width .3s; }
+  .bars .val { font-family: var(--mono); font-size: 12px; white-space: nowrap; color: var(--text); }
+  .bc-c0 { --bc: var(--c1); } .bc-c2 { --bc: var(--c2); } .bc-lang { --bc: var(--c3); }
+  .comparenote { font-size: 13px; }
+  h3.ct { font-size: 13px; margin: 8px 0 2px; font-weight: 600; }
+  @media (max-width: 640px) { .bars .lbl { font-size: 12px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../">← 一覧</a>
+  <h1>ソースから機械語、そして実行まで</h1>
+  <div class="status">
+    <span class="badge" id="buildBadge">未ビルド</span>
+    <span class="badge" id="runBadge">停止中</span>
+  </div>
+</header>
+<main>
+  <div id="loading" class="loading">wasm (コンパイラ + アセンブラ + エミュレータ) を読み込み中…</div>
+  <pre id="error" class="err"></pre>
+  <div id="app" hidden>
+    <div class="grid" style="margin-bottom:12px">
+      <section class="panel wide">
+        <h2>試してみよう</h2>
+        <ul class="notes">
+          <li>C (<code>cc/</code> の rvcc) または minilang (<code>compiler/</code> の minicc) → RISC-V アセンブリ → <code>asm/</code> の rvasm で機械語と ELF → <code>emu/</code> のエミュレータで実行、を全部ブラウザの中でやっています。どのカラムの行もクリックすると、対応する行が他のカラムで光ります。</li>
+          <li><b>fib.c を -O0 と -O2 で</b>「次の行」→「1 命令」と進めてみましょう。pc の位置が機械語・アセンブリ・C の行に同時に表示されます。-O0 では式の途中結果がスタックに積まれ、-O2 では <code>s1</code> レジスタに置かれる (<code>mv s1, a0</code>) のが見えます。</li>
+          <li><code>printf</code> の文字列を指す <code>la a0, .Lstr0</code> は <code>auipc</code> + <code>addi</code> の 2 命令になり、<code>R_RISCV_PCREL_HI20</code> / <code>PCREL_LO12_I</code> の 2 つのリロケーションで「pc からの距離」が埋め込まれます。リロケーション表の行をクリックして、ビット表示で即値の上位 20 ビットと下位 12 ビットを見比べてください。<code>call</code> も <code>auipc</code> + <code>jalr</code> です。</li>
+          <li>下の「比較」で fib(25) を C (-O0 / -O2) と minilang で走らせると、動的型のコスト (タグ付き整数の検査・クロージャ経由の呼び出し) が実行命令数の差として出ます。minilang の <code>fib</code> 本体のアセンブリも開いて、C の 24 行と比べてみましょう。</li>
+        </ul>
+      </section>
+
+      <section class="panel wide">
+        <div class="toolbar">
+          <select id="lang" aria-label="言語">
+            <option value="c">C (rvcc)</option>
+            <option value="lang">minilang (minicc)</option>
+          </select>
+          <select id="opt" aria-label="最適化">
+            <option value="0">-O0</option>
+            <option value="1">-O1</option>
+            <option value="2" selected>-O2</option>
+          </select>
+          <select id="example" aria-label="例題"></select>
+          <button class="primary" id="btnCompile">コンパイル</button>
+          <span class="sep"></span>
+          <button id="btnRun">実行</button>
+          <button id="btnStepLine" title="ソースの次の行に着くまで実行 (libc・ランタイムの中は一気に進む)">次の行</button>
+          <button id="btnStep" title="1 命令実行">1 命令</button>
+          <button id="btnStepN">N 命令</button>
+          <input class="n" type="number" id="stepN" value="100" min="1" aria-label="N">
+          <button id="btnReset" title="最初 (_start) から">リセット</button>
+        </div>
+        <div class="toolbar" style="margin-bottom:0">
+          <label class="muted" for="args">引数</label>
+          <input type="text" class="args" id="args" placeholder='argv[1..] 例: hello "two words"' autocomplete="off" spellcheck="false">
+          <label class="muted" for="budget">命令数の上限</label>
+          <input type="number" class="n" id="budget" value="200000000" min="1000" step="1000000" style="width:9em">
+          <label class="chk"><input type="checkbox" id="showAll"> libc / ランタイムも表示</label>
+        </div>
+      </section>
+    </div>
+
+    <div class="cols">
+      <section class="panel col">
+        <h2>1. ソース <span class="badge" id="srcBadge"></span>
+          <button id="btnEdit" style="margin-left:auto;font-size:12px;padding:1px 8px">編集</button></h2>
+        <textarea id="src" spellcheck="false" aria-label="ソース" hidden></textarea>
+        <div class="box" id="srcBox"><div class="code" id="srcView"></div></div>
+      </section>
+      <section class="panel col">
+        <h2>2. アセンブリ <span class="badge" id="asmBadge"></span></h2>
+        <div class="box" id="asmBox"><div class="code" id="asmView"></div></div>
+      </section>
+      <section class="panel col">
+        <h2>3. 機械語 (リンク後) <span class="badge" id="mcBadge"></span></h2>
+        <div class="box" id="mcBox"><div class="code mc" id="mcView"></div></div>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section class="panel wide" id="bitPanel">
+        <h2>命令のビット</h2>
+        <div id="bitView" class="muted">機械語 (またはアセンブリ・ソース) の行をクリックすると、その命令の 32 ビットを分解して表示します。</div>
+      </section>
+
+      <section class="panel wide">
+        <h2>実行</h2>
+        <div class="runcols">
+          <div>
+            <div class="terminal" id="console" aria-label="標準出力"></div>
+            <div class="pcinfo" id="runInfo"></div>
+          </div>
+          <div>
+            <div class="pcinfo" id="pcInfo"></div>
+            <table class="kv" id="regs"></table>
+          </div>
+        </div>
+        <h2 style="margin-top:10px">システムコール</h2>
+        <div class="scroll" style="max-height:200px"><table class="kv" id="sysLog"></table></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>リロケーション (リンカが命令語を書き換えた場所)</h2>
+        <div class="toolbar"><label class="chk"><input type="checkbox" id="relUser" checked> ユーザのコードだけ</label>
+          <span class="muted" id="relCount"></span></div>
+        <div class="scroll"><table class="kv" id="relocs"></table></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>ELF</h2>
+        <div class="runcols">
+          <div>
+            <table class="kv" id="elfHead"></table>
+            <h2 style="margin-top:10px">セグメント (プログラムヘッダ: ローダが見る)</h2>
+            <div style="overflow:auto"><table class="kv" id="elfSegs"></table></div>
+            <h2 style="margin-top:10px">セクション</h2>
+            <div style="overflow:auto"><table class="kv" id="elfSecs"></table></div>
+            <details><summary>シンボル表</summary>
+              <label class="chk"><input type="checkbox" id="symLocal"> .L で始まるローカルラベルも</label>
+              <div class="scroll"><table class="kv" id="elfSyms"></table></div>
+            </details>
+          </div>
+          <div>
+            <div class="legend" id="hexLegend"></div>
+            <div class="hexdump" id="hexdump"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <h2>比較: fib(25) を C と minilang で</h2>
+        <div class="toolbar"><button id="btnCompare">比較を実行</button><span class="muted" id="cmpStatus"></span></div>
+        <div id="cmpView" class="muted">C -O0 / C -O2 / minilang で同じ fib(25) (<code>cc/bench/fib25.c</code>, <code>fib25.lang</code>) をビルドして最後まで実行し、命令数を数えます。</div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="../shared/wasm_exec.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const REG = ["zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+  "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"];
+const DEFAULTS = { c: "fib.c", lang: "fib.lang" };
+
+let examples = [];          // ファイル名
+const exText = {};          // 名前 → 中身 (読み込み済み)
+let cur = null;             // 直近のコンパイル結果
+let ix = null;              // 対応表
+let curExample = null;      // 読み込んだ例題名 (編集していなければ期待出力と比べる)
+let running = false, started = false, halted = false, prevState = null, sysSeen = 0;
+let consoleText = "";       // 期待出力との比較用 (stdout + stderr)
+let selIdx = -1;            // ビット表示中の listing 添字
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function hx(n, w = 0) { return Number(n).toString(16).padStart(w, "0"); }
+function showError(msg) { $("error").textContent += msg + "\n"; }
+function fmtN(n) { return Number(n).toLocaleString("en-US"); }
+function signedHex(v) { v = Number(v); return v < 0 ? "-0x" + (-v).toString(16) : "0x" + v.toString(16); }
+
+// ---- 例題 ----
+async function loadExamples() {
+  const r = await fetch("examples/index.json");
+  if (!r.ok) throw new Error("examples/index.json が読めません (build.sh を実行してください)");
+  examples = await r.json();
+  const sel = $("example");
+  const groups = { c: "C の例題 (cc/examples)", lang: "minilang の例題 (compiler/examples)", bench: "ベンチマーク (cc/bench)" };
+  sel.innerHTML = "";
+  for (const [g, label] of Object.entries(groups)) {
+    const og = document.createElement("optgroup");
+    og.label = label;
+    for (const f of examples) {
+      const kind = f.startsWith("fib25") ? "bench" : f.endsWith(".c") ? "c" : "lang";
+      if (kind !== g) continue;
+      const o = document.createElement("option");
+      o.value = f; o.textContent = f;
+      og.append(o);
+    }
+    sel.append(og);
+  }
+  const o = document.createElement("option");
+  o.value = ""; o.textContent = "(編集中)"; o.hidden = true;
+  sel.append(o);
+}
+async function fetchText(name) {
+  if (exText[name] === undefined) {
+    const r = await fetch("examples/" + name);
+    exText[name] = r.ok ? await r.text() : null;
+  }
+  return exText[name];
+}
+async function loadExample(name) {
+  const [text] = await Promise.all([fetchText(name), fetchText(name.replace(/\.(c|lang)$/, ".out"))]);
+  if (text == null) { showError("例題が読めません: " + name); return; }
+  $("src").value = text;
+  $("example").value = name;
+  $("lang").value = name.endsWith(".lang") ? "lang" : "c";
+  $("opt").disabled = $("lang").value !== "c";
+  const m = text.split("\n")[0].match(/^\/\/ args: (.*)$/);
+  $("args").value = m ? m[1] : "";
+  curExample = name;
+  compile();
+}
+function srcName() {
+  const lang = $("lang").value;
+  if (curExample && (curExample.endsWith(".lang") ? "lang" : "c") === lang) return curExample;
+  return lang === "c" ? "prog.c" : "prog.lang";
+}
+
+// ---- ソースの表示 / 編集 ----
+function setEditing(on) {
+  $("src").hidden = !on;
+  $("srcBox").hidden = on;
+  $("btnEdit").textContent = on ? "表示に戻す" : "編集";
+  if (on) $("src").focus();
+}
+$("btnEdit").onclick = () => {
+  if ($("src").hidden) setEditing(true);
+  else if (cur) setEditing(false);
+};
+$("src").addEventListener("input", () => {
+  if (curExample && $("src").value !== exText[curExample]) { $("example").value = ""; }
+  $("buildBadge").textContent = "未ビルド (編集あり)";
+});
+$("src").addEventListener("keydown", (e) => {
+  if (e.key === "Tab") { e.preventDefault(); document.execCommand("insertText", false, "\t"); }
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); compile(); }
+});
+
+// ---- コンパイル ----
+function compile() {
+  stopRun();
+  const req = { lang: $("lang").value, name: srcName(), src: $("src").value, opt: Number($("opt").value) };
+  const t0 = performance.now();
+  const res = JSON.parse(pipeline.compile(JSON.stringify(req)));
+  const ms = performance.now() - t0;
+  started = false; halted = false; prevState = null; selIdx = -1;
+  $("runBadge").textContent = "停止中";
+  $("asmView").classList.remove("wrap");
+  resetConsole();
+  if (!res.ok) {
+    cur = null; ix = null;
+    $("buildBadge").textContent = "エラー";
+    $("buildBadge").className = "badge err";
+    $("mcView").innerHTML = "";
+    renderSourceError(req.src, res.error);
+    $("asmBadge").textContent = ""; $("mcBadge").textContent = "";
+    for (const id of ["relocs", "elfHead", "elfSegs", "elfSecs", "elfSyms", "regs", "sysLog"]) $(id).innerHTML = "";
+    $("hexdump").innerHTML = ""; $("hexLegend").innerHTML = ""; $("pcInfo").innerHTML = ""; $("runInfo").innerHTML = "";
+    $("bitView").innerHTML = '<span class="muted">ビルドに失敗しました。</span>';
+    updateButtons();
+    return;
+  }
+  cur = res;
+  cur.srcText = req.src;
+  buildIndex();
+  const n = cur.listing.filter((l) => l.kind === "inst").length;
+  $("buildBadge").textContent = `ビルド OK (${ms.toFixed(0)} ms)`;
+  $("buildBadge").className = "badge ok";
+  $("srcBadge").textContent = cur.srcName;
+  renderSource();
+  renderAsm();
+  renderMC();
+  renderRelocs();
+  renderELF();
+  $("bitView").innerHTML = '<span class="muted">機械語 (またはアセンブリ・ソース) の行をクリックすると、その命令の 32 ビットを分解して表示します。</span>';
+  $("regs").innerHTML = ""; $("sysLog").innerHTML = "";
+  $("pcInfo").innerHTML = '<span class="muted">レジスタと pc は実行を始めると表示されます (「次の行」なら main の最初の行で止まります)。</span>';
+  $("runInfo").innerHTML = `<span class="muted">命令 ${fmtN(n)} 個 / ELF ${fmtN(cur.elf.size)} バイト。「実行」か「次の行」で始めます。</span>`;
+  setEditing(false);
+  updateButtons();
+  // 最初はユーザのコードの先頭 (main があれば main) を選んでおく
+  const main = cur.listing.findIndex((l) => l.sym === "main" || l.sym === "mini_main");
+  if (main >= 0) scrollTo("mc", main);
+}
+
+// ---- 対応表 ----
+function buildIndex() {
+  ix = { asmByKey: new Map(), mcBySrc: new Map(), asmBySrc: new Map(), relByIdx: new Map(), labelAt: new Map(),
+    userFiles: new Set(), visible: (fi) => $("showAll").checked || ix.userFiles.has(fi) };
+  cur.files.forEach((f, fi) => {
+    if (f.user) ix.userFiles.add(fi);
+    if (!f.user) return;
+    f.lines.forEach((sl, k) => {
+      if (!sl) return;
+      if (!ix.asmBySrc.has(sl)) ix.asmBySrc.set(sl, []);
+      ix.asmBySrc.get(sl).push(fi + ":" + (k + 1));
+    });
+  });
+  cur.listing.forEach((l, i) => {
+    const key = l.file + ":" + l.line;
+    if (!ix.asmByKey.has(key)) ix.asmByKey.set(key, []);
+    ix.asmByKey.get(key).push(i);
+    if (ix.userFiles.has(l.file) && l.src) {
+      if (!ix.mcBySrc.has(l.src)) ix.mcBySrc.set(l.src, []);
+      ix.mcBySrc.get(l.src).push(i);
+    }
+    if (l.sym) ix.labelAt.set(l.addr, l.sym);
+    else if (l.lbl && !ix.labelAt.has(l.addr)) ix.labelAt.set(l.addr, l.lbl);
+  });
+  cur.relocs.forEach((r, k) => {
+    if (r.index < 0) return;
+    if (!ix.relByIdx.has(r.index)) ix.relByIdx.set(r.index, []);
+    ix.relByIdx.get(r.index).push(k);
+  });
+}
+
+// 1 つの行から「対応する行の集合」を作る
+function groupFrom(kind, key) {
+  const g = { src: new Set(), asm: new Set(), mc: new Set(), inst: -1 };
+  if (!ix) return g;
+  if (kind === "src") {
+    const L = Number(key);
+    g.src.add(L);
+    for (const k of ix.asmBySrc.get(L) || []) g.asm.add(k);
+    for (const i of ix.mcBySrc.get(L) || []) g.mc.add(i);
+  } else if (kind === "asm") {
+    g.asm.add(key);
+    for (const i of ix.asmByKey.get(key) || []) g.mc.add(i);
+    const [fi, n] = key.split(":").map(Number);
+    const f = cur.files[fi];
+    if (f.user && f.lines[n - 1]) g.src.add(f.lines[n - 1]);
+  } else if (kind === "mc") {
+    const i = Number(key), l = cur.listing[i];
+    g.mc.add(i);
+    g.asm.add(l.file + ":" + l.line);
+    if (ix.userFiles.has(l.file) && l.src) g.src.add(l.src);
+  }
+  g.inst = [...g.mc].find((i) => cur.listing[i].kind === "inst") ?? -1;
+  return g;
+}
+
+const marked = { hov: [], sel: [], current: [] };
+function applyGroup(cls, g) {
+  for (const el of marked[cls]) el.classList.remove(cls);
+  marked[cls] = [];
+  if (!g) return;
+  const add = (el) => { if (el) { el.classList.add(cls); marked[cls].push(el); } };
+  for (const L of g.src) add($("srcView").querySelector(`[data-k="${L}"]`));
+  for (const k of g.asm) add($("asmView").querySelector(`[data-k="${k}"]`));
+  for (const i of g.mc) add($("mcView").querySelector(`[data-k="${i}"]`));
+}
+
+function scrollBox(box, el) {
+  if (!el || box.offsetParent === null) return;
+  const top = el.offsetTop, bottom = top + el.offsetHeight;
+  if (top < box.scrollTop + 20 || bottom > box.scrollTop + box.clientHeight - 20) box.scrollTop = top - box.clientHeight / 3;
+}
+function scrollGroup(g) {
+  const first = (view, keys) => { for (const k of keys) { const el = view.querySelector(`[data-k="${k}"]`); if (el) return el; } return null; };
+  scrollBox($("srcBox"), first($("srcView"), g.src));
+  scrollBox($("asmBox"), first($("asmView"), g.asm));
+  scrollBox($("mcBox"), first($("mcView"), [...g.mc].sort((a, b) => a - b)));
+}
+
+// 選択 (クリック)
+function select(kind, key, scroll = true) {
+  const g = groupFrom(kind, key);
+  applyGroup("sel", g);
+  if (scroll) {
+    // クリックしたカラム以外をスクロールする
+    if (kind !== "src") scrollBox($("srcBox"), $("srcView").querySelector(`[data-k="${[...g.src][0]}"]`));
+    if (kind !== "asm") { const k = [...g.asm][0]; scrollBox($("asmBox"), $("asmView").querySelector(`[data-k="${k}"]`)); }
+    if (kind !== "mc") { const i = [...g.mc].sort((a, b) => a - b)[0]; scrollBox($("mcBox"), $("mcView").querySelector(`[data-k="${i}"]`)); }
+  }
+  if (g.inst >= 0) { selIdx = g.inst; renderBits(g.inst); markReloc(g.inst); renderHexSel(); }
+}
+function scrollTo(kind, key) { select(kind, key, true); const g = groupFrom(kind, key); scrollGroup(g); }
+
+for (const [kind, view] of [["src", "srcView"], ["asm", "asmView"], ["mc", "mcView"]]) {
+  const el = $(view);
+  el.addEventListener("mouseover", (e) => {
+    const t = e.target.closest("[data-k]");
+    applyGroup("hov", t ? groupFrom(kind, t.dataset.k) : null);
+  });
+  el.addEventListener("mouseleave", () => applyGroup("hov", null));
+  el.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-k]");
+    if (t) select(kind, t.dataset.k);
+  });
+}
+$("srcView").addEventListener("dblclick", (e) => {
+  const t = e.target.closest("[data-k]");
+  setEditing(true);
+  if (t) {
+    const L = Number(t.dataset.k), ta = $("src");
+    const lines = ta.value.split("\n");
+    const pos = lines.slice(0, L - 1).reduce((a, s) => a + s.length + 1, 0);
+    ta.setSelectionRange(pos, pos);
+    ta.scrollTop = (L - 5) * 18;
+  }
+});
+
+// ---- 描画: ソース ----
+function renderSource() {
+  const lines = cur.srcText.replace(/\n$/, "").split("\n");
+  let html = "";
+  lines.forEach((s, k) => {
+    const L = k + 1;
+    const mapped = ix.mcBySrc.has(L);
+    const cmt = /^\s*\/\//.test(s);
+    html += `<div class="ln${mapped ? "" : cmt ? " cmt" : " dim"}" data-k="${L}"><span class="no">${L}</span>${esc(s) || " "}</div>`;
+  });
+  $("srcView").innerHTML = html;
+  marked.hov = []; marked.sel = []; marked.current = [];
+}
+function renderSourceError(src, e) {
+  const lines = src.replace(/\n$/, "").split("\n");
+  let html = "";
+  lines.forEach((s, k) => {
+    const L = k + 1;
+    const bad = e.user && e.line === L;
+    html += `<div class="ln${bad ? " errline" : ""}" ${bad ? 'id="errLine"' : ""}><span class="no">${L}</span>${esc(s) || " "}</div>`;
+    if (bad) {
+      const col = Math.max(1, e.col || 1);
+      html += `<div class="ln errmsg"><span class="no"></span>${" ".repeat(col - 1)}^ ${esc(e.msg)}</div>`;
+    }
+  });
+  $("srcView").innerHTML = html;
+  marked.hov = []; marked.sel = []; marked.current = [];
+  $("srcBadge").textContent = srcName();
+  setEditing(false);
+  const stage = { compile: "コンパイルエラー", asm: "アセンブルエラー", link: "リンクエラー" }[e.stage] || "エラー";
+  $("asmBadge").textContent = "";
+  $("asmView").classList.add("wrap");
+  $("asmView").innerHTML = `<div class="ln errmsg" style="padding:8px">${esc(stage)}: ${esc(e.text)}${e.file ? `\n(${esc(e.file)} ${e.line}:${e.col})` : ""}</div>`;
+  scrollBox($("srcBox"), $("errLine"));
+}
+
+// ---- 描画: アセンブリ ----
+function renderAsm() {
+  let html = "", shown = 0, total = 0;
+  cur.files.forEach((f, fi) => {
+    const lines = f.text.replace(/\n$/, "").split("\n");
+    total += lines.length;
+    if (!ix.visible(fi)) return;
+    shown += lines.length;
+    html += `<div class="ln fhead">${esc(f.name)}${f.source && f.source !== cur.srcName ? ` <span class="muted">(${esc(f.source)} から生成)</span>` : ""}${f.user ? "" : ' <span class="muted">— ライブラリ</span>'}</div>`;
+    lines.forEach((s, k) => {
+      const key = fi + ":" + (k + 1);
+      const has = ix.asmByKey.has(key);
+      const cmt = /^\s*#/.test(s);
+      html += `<div class="ln${has ? "" : cmt ? " cmt" : " dim"}" data-k="${key}"><span class="no">${k + 1}</span>${esc(s.replace(/\t/g, "    ")) || " "}</div>`;
+    });
+  });
+  $("asmView").innerHTML = html;
+  $("asmBadge").textContent = $("showAll").checked ? `${fmtN(total)} 行` : `${fmtN(shown)} 行 (全 ${fmtN(total)})`;
+  marked.hov = []; marked.sel = []; marked.current = [];
+}
+
+// ---- 描画: 機械語 ----
+function symAnnot(dis) {
+  const m = dis.match(/(0x[0-9a-f]+)$/);
+  if (!m) return esc(dis);
+  const s = ix.labelAt.get(parseInt(m[1], 16));
+  return esc(dis) + (s ? ` <span class="sym">&lt;${esc(s)}&gt;</span>` : "");
+}
+function renderMC() {
+  let html = "", shown = 0, lastFile = -1, lastSec = "";
+  cur.listing.forEach((l, i) => {
+    if (!ix.visible(l.file)) return;
+    shown++;
+    if (l.file !== lastFile || l.section !== lastSec) {
+      html += `<div class="ln fhead">${esc(cur.files[l.file].name)} ${esc(l.section)}</div>`;
+      lastFile = l.file; lastSec = l.section;
+    }
+    if (l.sym) html += `<div class="ln symrow"><span class="no"></span>${hx(l.addr, 8)} &lt;${esc(l.sym)}&gt;:</div>`;
+    const rel = ix.relByIdx.has(i) ? ` <span class="rl" title="リロケーションで書き換えた">⚑</span>` : "";
+    if (l.kind === "inst") {
+      html += `<div class="ln" data-k="${i}"><span class="a">${hx(l.addr, 8)}</span><span class="w">${hx(l.word, 8)}</span><span class="d">${symAnnot(l.dis)}${rel}</span><span class="s">${esc(l.source)}</span></div>`;
+    } else {
+      const b = l.bytes ? l.bytes.match(/../g).slice(0, 8).join(" ") + (l.size > 8 ? " …" : "") : `(${l.size} バイト、0 で初期化)`;
+      html += `<div class="ln dim" data-k="${i}"><span class="a">${hx(l.addr, 8)}</span><span class="w"></span><span class="d">${esc(b)}</span><span class="s">${esc(l.source)}</span></div>`;
+    }
+  });
+  $("mcView").innerHTML = html;
+  const n = cur.listing.filter((l) => l.kind === "inst").length;
+  const nu = cur.listing.filter((l) => l.kind === "inst" && ix.userFiles.has(l.file)).length;
+  $("mcBadge").textContent = `命令 ${fmtN(nu)} (全 ${fmtN(n)})`;
+  marked.hov = []; marked.sel = []; marked.current = [];
+}
+
+$("showAll").onchange = () => {
+  if (!cur) return;
+  renderAsm(); renderMC();
+  if (selIdx >= 0) select("mc", selIdx, true);
+  if (prevState) markPC(prevState);
+};
+
+// ---- ビット表示 ----
+const FORMAT_INFO = {
+  R: "R 形式 (レジスタ同士の演算): rs1 と rs2 を読んで rd に書く。funct3 + funct7 で演算の種類を区別します。即値はありません。",
+  I: "I 形式 (即値つき演算・ロード・jalr・ecall): 12 ビットの即値は命令の上端 [31:20] にそのまま入り、符号拡張されます。",
+  S: "S 形式 (ストア): rd が無いぶん、即値 12 ビットを [31:25] と [11:7] に分けて入れます (rs1 / rs2 の位置を R 形式と揃えるため)。",
+  B: "B 形式 (条件分岐): 分岐先は pc からの相対 (2 の倍数) なので bit 0 は入れず、13 ビットの即値を 4 つに分けて並べます。符号 (bit 12) は常に命令の bit 31。",
+  U: "U 形式 (lui / auipc): 上位 20 ビットの即値。値は imm[31:12] << 12 で、下位 12 ビットは次の addi / ld / jalr が足します。",
+  J: "J 形式 (jal): 21 ビットの pc 相対 (2 の倍数) の即値を 4 つに分けて並べます。符号は常に bit 31。",
+};
+const IMM_WIDTH = { I: 12, S: 12, B: 13, U: 32, J: 21 };
+function fieldKind(name) {
+  if (name.startsWith("imm") || name === "shamt") return "imm";
+  if (name === "funct6") return "funct7";
+  return ["opcode", "rd", "funct3", "rs1", "rs2", "funct7"].includes(name) ? name : "other";
+}
+function reg(n) { return `x${n} (${REG[n]})`; }
+
+function renderBits(i) {
+  const l = cur.listing[i];
+  const e = l.enc;
+  if (!e) return;
+  let idx = "", bits = "", flds = "", vals = "";
+  for (let b = 31; b >= 0; b--) idx += `<div class="idx">${b}</div>`;
+  for (const f of e.fields) {
+    const k = fieldKind(f.name);
+    for (let b = f.hi; b >= f.lo; b--) {
+      bits += `<div class="b kk k-${k}${b === f.hi ? " first" : ""}">${(l.word >>> b) & 1}</div>`;
+    }
+    const span = f.hi - f.lo + 1;
+    const v = f.name === "rd" || f.name === "rs1" || f.name === "rs2" ? `${f.value} ${REG[f.value]}` : (span > 4 ? "0x" + f.value.toString(16) : String(f.value));
+    flds += `<div class="f kk k-${k}" style="grid-column: span ${span}" title="${esc(f.name)} [${f.hi}:${f.lo}] = ${f.value}">${esc(f.name)}</div>`;
+    vals += `<div class="fv" style="grid-column: span ${span}" title="${esc(v)}">${esc(span >= 3 ? v : f.value)}</div>`;
+  }
+  // 即値の組み立て
+  let immHtml = "";
+  const w = IMM_WIDTH[e.format];
+  if (w) {
+    const owner = new Array(32).fill(null); // 即値のビット位置 → 命令語のどのビットから来たか
+    for (const f of e.fields) {
+      const m = f.name.match(/^imm\[(\d+)(?::(\d+))?\]$/);
+      if (!m) continue;
+      const hi = Number(m[1]), lo = m[2] !== undefined ? Number(m[2]) : hi;
+      for (let b = lo; b <= hi; b++) owner[b] = { src: f.lo + (b - lo), name: f.name };
+    }
+    if (e.format === "I" && !owner[0]) { immHtml = ""; }
+    else {
+      const pieces = [];
+      let run = null;
+      for (let b = w - 1; b >= 0; b--) {
+        const o = owner[b];
+        const bit = o ? (l.word >>> o.src) & 1 : 0;
+        const key = o ? o.name : "0";
+        if (run && run.key === key) run.s += bit;
+        else { run = { key, s: String(bit), hi: b }; pieces.push(run); }
+      }
+      immHtml = `<div class="immrow"><span class="sx" title="符号拡張">${(l.word >>> 31) & 1 ? "1…1" : "0…0"} ←符号拡張</span>` +
+        pieces.map((p) => p.key === "0" ? `<span class="z" title="命令には入っていない (常に 0)">${p.s}</span>` :
+          `<span class="kk k-imm" style="background:color-mix(in srgb, var(--c3) 18%, var(--panel))" title="${esc(p.key)}">${p.s}</span>`).join("") +
+        `</div><div class="muted" style="font-size:12px">上から順に ${pieces.filter((p) => p.key !== "0").map((p) => esc(p.key)).join(" + ")}${pieces.some((p) => p.key === "0") ? " + 末尾の 0" : ""} を並べたもの</div>`;
+    }
+  }
+  let immText = "";
+  if (e.format === "U") immText = `即値 = 0x${(Number(e.imm) >>> 0).toString(16)} (imm[31:12] = 0x${((Number(e.imm) >>> 12) & 0xfffff).toString(16)} を 12 ビット左へ)` + (l.mn === "auipc" ? ` → rd = pc + 即値 = 0x${hx(l.addr)} + ${signedHex(e.imm)} = 0x${hx(l.addr + Number(e.imm))}` : "");
+  else if (e.format === "B" || e.format === "J") immText = `即値 = ${e.imm} (${signedHex(e.imm)}) → 飛び先 = pc + 即値 = 0x${hx(l.addr + Number(e.imm))}${ix.labelAt.get(l.addr + Number(e.imm)) ? " &lt;" + esc(ix.labelAt.get(l.addr + Number(e.imm))) + "&gt;" : ""}`;
+  else if (e.format === "I" || e.format === "S") immText = `即値 = ${e.imm} (${signedHex(e.imm)})`;
+  const regs = [];
+  if (["R", "I", "U", "J"].includes(e.format)) regs.push(`rd = ${reg(e.rd)}`);
+  if (["R", "I", "S", "B"].includes(e.format)) regs.push(`rs1 = ${reg(e.rs1)}`);
+  if (["R", "S", "B"].includes(e.format)) regs.push(`rs2 = ${reg(e.rs2)}`);
+  const f = cur.files[l.file];
+  const pseudo = l.pseudo ? `<p>アセンブリでは擬似命令 <code>${esc(l.pseudo)}</code> と書かれ、アセンブラが <code>${esc(l.mn)}</code> を含む機械語に展開しました。</p>` : "";
+  const rels = (ix.relByIdx.get(i) || []).map((k) => {
+    const r = cur.relocs[k];
+    return `<p>リロケーション <code>${esc(r.type)}</code> (シンボル <code>${esc(r.symbol)}</code>): アセンブル時は即値が 0 で、リンカが ${relocFormula(r)} を埋め込みました (${hx(r.before, 8)} → ${hx(r.after, 8)})。</p>`;
+  }).join("");
+  $("bitView").innerHTML =
+    `<div class="pcinfo"><b>0x${hx(l.addr, 8)}</b> <span>命令語 0x${hx(l.word, 8)}</span> <span>${symAnnot(l.dis)}</span>` +
+    `<span class="muted">${esc(f.name)}:${l.line} <code>${esc(l.source)}</code>${l.src && ix.userFiles.has(l.file) ? ` ← ${esc(cur.srcName)}:${l.src}` : ""}</span></div>` +
+    `<div class="bitwrap"><div class="bits">${idx}${bits}${flds}${vals}</div></div>` +
+    `<div class="bitinfo"><div><p><span class="badge">${esc(e.format)} 形式</span> opcode = 0b${e.opcode.toString(2).padStart(7, "0")}${["R", "I", "S", "B"].includes(e.format) ? `, funct3 = ${e.funct3}` : ""}${e.format === "R" ? `, funct7 = 0x${e.funct7.toString(16)}` : ""}</p>` +
+    `<p>${FORMAT_INFO[e.format] || "不明な形式"}</p><p class="mono">${regs.join(" / ")}</p></div>` +
+    `<div>${immText ? `<p class="mono">${immText}</p>` : ""}${immHtml}${pseudo}${rels}</div></div>`;
+}
+function relocFormula(r) {
+  const S = "0x" + hx(r.symAddr), P = "0x" + hx(r.addr), A = r.addend;
+  switch (r.type) {
+    case "R_RISCV_PCREL_HI20": {
+      const hi = ((Number(r.value) + 0x800) >> 12) & 0xfffff;
+      return `S + A − P = ${S} + ${A} − ${P} = ${signedHex(r.value)} の上位 20 ビット ((距離 + 0x800) >> 12 = 0x${hx(hi)}。下位 12 ビットは符号付きで足されるので 0x800 で丸める)`;
+    }
+    case "R_RISCV_CALL": case "R_RISCV_CALL_PLT": case "R_RISCV_BRANCH": case "R_RISCV_JAL":
+      return `S + A − P = ${S} + ${A} − ${P} = ${signedHex(r.value)}`;
+    case "R_RISCV_PCREL_LO12_I": case "R_RISCV_PCREL_LO12_S":
+      { const lo = ((Number(r.value) & 0xfff) << 20) >> 20;
+        return `対応する auipc (シンボル ${esc(r.symbol)} がその auipc の位置) が使った距離 ${signedHex(r.value)} の下位 12 ビット = ${lo}`; }
+    default: return `S + A = ${S} + ${A} = ${signedHex(r.value)}`;
+  }
+}
+
+// ---- リロケーション ----
+function renderRelocs() {
+  const onlyUser = $("relUser").checked;
+  const rows = cur.relocs.map((r, k) => [r, k]).filter(([r]) => !onlyUser || cur.files.some((f) => f.user && f.name === r.file));
+  $("relCount").textContent = `${rows.length} / ${cur.relocs.length} 個`;
+  let html = "<tr><th>P (場所)</th><th>種類</th><th>シンボル</th><th>S</th><th>A</th><th>埋め込む値</th><th>命令語 前 → 後</th><th>ソース</th></tr>";
+  for (const [r, k] of rows) {
+    const l = r.index >= 0 ? cur.listing[r.index] : null;
+    // CALL は auipc + jalr の 2 語 (8 バイト、リトルエンディアン) なので命令語ごとに分けて見せる
+    const words = (v) => r.size === 8 ? hx(Number(BigInt(v) & 0xffffffffn), 8) + " " + hx(Number(BigInt(v) >> 32n), 8) : hx(v, 8);
+    const before = words(r.before), after = words(r.after);
+    html += `<tr class="clickable" data-rel="${k}" data-idx="${r.index}"><td>${hx(r.addr, 8)}</td><td>${esc(r.type.replace("R_RISCV_", ""))}</td><td>${esc(r.symbol)}</td>` +
+      `<td>${hx(r.symAddr, 8)}</td><td>${r.addend}</td><td>${signedHex(r.value)}</td><td><span class="muted">${before}</span> → ${after}</td>` +
+      `<td class="muted">${esc(r.file)}:${r.line}${l ? " " + esc(l.source) : ""}</td></tr>`;
+  }
+  $("relocs").innerHTML = html;
+  markReloc(selIdx);
+}
+$("relUser").onchange = () => cur && renderRelocs();
+$("relocs").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-idx]");
+  if (!tr || tr.dataset.idx === "-1") return;
+  const i = Number(tr.dataset.idx);
+  if (!ix.visible(cur.listing[i].file)) { $("showAll").checked = true; renderAsm(); renderMC(); }
+  scrollTo("mc", i);
+  $("mcBox").scrollIntoView({ block: "nearest", behavior: "smooth" });
+});
+function markReloc(i) {
+  for (const tr of $("relocs").querySelectorAll("tr[data-idx]")) tr.classList.toggle("sel", Number(tr.dataset.idx) === i);
+}
+
+// ---- ELF ----
+let hexColors = null, hexRows = [];
+function renderELF() {
+  const e = cur.elf;
+  $("elfHead").innerHTML = [
+    ["マジック", "7f 45 4c 46 (\\x7fELF)", "64 ビット・リトルエンディアン"],
+    ["種類", e.type === 2 ? "EXEC" : e.type, "静的リンクの実行ファイル"],
+    ["マシン", e.machine === 243 ? "RISC-V (243)" : e.machine, ""],
+    ["エントリ", "0x" + hx(e.entry), ix.labelAt.get(e.entry) ? "<" + ix.labelAt.get(e.entry) + ">" : ""],
+    ["プログラムヘッダ", `0x${hx(e.phoff)} から ${e.phnum} 個 × ${e.phentsize}`, ""],
+    ["セクションヘッダ", `0x${hx(e.shoff)} から ${e.shnum} 個 × ${e.shentsize}`, ""],
+    ["ファイルサイズ", fmtN(e.size) + " バイト", ""],
+  ].map(([k, v, d]) => `<tr><th>${k}</th><td>${esc(v)}</td><td class="muted">${esc(d)}</td></tr>`).join("");
+  $("elfSegs").innerHTML = "<tr><th>種類</th><th>オフセット</th><th>vaddr</th><th>filesz</th><th>memsz</th><th>権限</th></tr>" +
+    e.segments.map((s) => `<tr><td>${s.type}</td><td>0x${hx(s.offset)}</td><td>0x${hx(s.vaddr)}</td><td>0x${hx(s.filesz)}</td><td>0x${hx(s.memsz)}${s.memsz > s.filesz ? ' <span class="muted">(.bss)</span>' : ""}</td><td>${s.flags}</td></tr>`).join("");
+  $("elfSecs").innerHTML = "<tr><th>名前</th><th>種類</th><th>アドレス</th><th>オフセット</th><th>サイズ</th><th>フラグ</th></tr>" +
+    e.sections.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.type}</td><td>${s.addr ? "0x" + hx(s.addr) : ""}</td><td>0x${hx(s.offset)}</td><td>${fmtN(s.size)}</td><td>${s.flags}</td></tr>`).join("");
+  renderSyms();
+  // 16 進ダンプ
+  const bytes = e.hex.match(/../g) || [];
+  hexColors = new Array(bytes.length).fill(-1);
+  e.ranges.forEach((r, k) => { for (let o = r.off; o < r.off + r.size && o < bytes.length; o++) hexColors[o] = k; });
+  $("hexLegend").innerHTML = e.ranges.map((r, k) => `<button data-off="${r.off}" class="r-${r.color}"><span class="sw"></span><span style="color:var(--text)">${esc(r.name)}</span></button>`).join("");
+  cur.hexBytes = bytes;
+  let html = "";
+  hexRows = [];
+  for (let row = 0; row * 16 < bytes.length; row++) html += `<div data-row="${row}">${hexRow(row, null)}</div>`;
+  $("hexdump").innerHTML = html;
+  hexRows = [...$("hexdump").children];
+  hexSelRow = -1;
+}
+function hexRow(row, selRange) {
+  const bytes = cur.hexBytes, e = cur.elf;
+  let s = `<span class="o">${hx(row * 16, 6)}</span>  `, ascii = "";
+  let open = null;
+  for (let o = row * 16; o < row * 16 + 16; o++) {
+    if (o >= bytes.length) { s += "   "; continue; }
+    const c = hexColors[o] >= 0 ? "r-" + e.ranges[hexColors[o]].color : "r-pad";
+    const sel = selRange && o >= selRange[0] && o < selRange[1];
+    const cls = c + (sel ? " selb" : "");
+    if (cls !== open) { if (open) s += "</span>"; s += `<span class="${cls}">`; open = cls; }
+    s += bytes[o] + (o % 16 === 7 ? "  " : " ");
+    const n = parseInt(bytes[o], 16);
+    ascii += n >= 0x20 && n < 0x7f ? String.fromCharCode(n) : ".";
+  }
+  if (open) s += "</span>";
+  return s + ` <span class="o">${esc(ascii)}</span>`;
+}
+let hexSelRow = -1;
+function renderHexSel() {
+  if (!cur || !hexRows.length) return;
+  if (hexSelRow >= 0) hexRows[hexSelRow].innerHTML = hexRow(hexSelRow, null);
+  hexSelRow = -1;
+  if (selIdx < 0) return;
+  const l = cur.listing[selIdx];
+  const sec = cur.elf.sections.find((s) => s.addr && l.addr >= s.addr && l.addr < s.addr + s.size && s.type !== "NOBITS");
+  if (!sec) return;
+  const off = sec.offset + (l.addr - sec.addr);
+  const row = Math.floor(off / 16);
+  hexRows[row].innerHTML = hexRow(row, [off, off + 4]);
+  hexSelRow = row;
+  const box = $("hexdump");
+  if (box.offsetParent !== null) box.scrollTop = hexRows[row].offsetTop - box.clientHeight / 3;
+}
+$("hexLegend").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-off]");
+  if (!b) return;
+  const row = Math.floor(Number(b.dataset.off) / 16);
+  $("hexdump").scrollTop = hexRows[row].offsetTop;
+});
+function renderSyms() {
+  if (!cur) return;
+  const all = $("symLocal").checked;
+  const syms = cur.symbols.filter((s) => all || !s.name.startsWith(".L"));
+  $("elfSyms").innerHTML = "<tr><th>アドレス</th><th>名前</th><th>セクション</th><th>ファイル</th><th></th></tr>" +
+    syms.map((s) => `<tr><td>${hx(s.value, 8)}</td><td>${esc(s.name)}</td><td>${esc(s.section)}</td><td class="muted">${esc(s.file)}</td><td class="muted">${s.global ? "global" : "local"}</td></tr>`).join("");
+}
+$("symLocal").onchange = renderSyms;
+
+// ---- 実行 ----
+function resetConsole() {
+  $("console").innerHTML = ""; consoleText = ""; sysSeen = 0;
+}
+function appendOut(chunks) {
+  if (!chunks) return;
+  const el = $("console");
+  for (const c of chunks) {
+    consoleText += c.text;
+    const sp = document.createElement("span");
+    if (c.fd === 2) sp.className = "e";
+    sp.textContent = c.text;
+    el.append(sp);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+function consoleNote(s) {
+  const sp = document.createElement("span");
+  sp.className = "sys"; sp.textContent = s;
+  $("console").append(sp);
+  $("console").scrollTop = $("console").scrollHeight;
+}
+function ensureStarted() {
+  if (!cur) return false;
+  if (started && !halted) return true;
+  resetConsole();
+  const err = pipeline.start($("args").value, "", Math.max(1000, Number($("budget").value) || 2e8));
+  if (err) { showError(err); return false; }
+  started = true; halted = false; prevState = null;
+  $("sysLog").innerHTML = "";
+  return true;
+}
+function handle(r) {
+  appendOut(r.out);
+  if (r.exited) {
+    halted = true;
+    consoleNote(`\n[終了コード ${r.code}${r.err ? " / " + r.err : ""} — ${fmtN(r.instret)} 命令]\n`);
+  } else if (r.budget) {
+    halted = true;
+    consoleNote(`\n[命令数の上限 ${fmtN(r.instret)} に達したので止めました]\n`);
+  }
+  return r;
+}
+function finishRun(r) {
+  let verdict = "";
+  if (r && r.exited && curExample && cur.srcText === exText[curExample]) {
+    const outName = curExample.replace(/\.(c|lang)$/, ".out");
+    const want = exText[outName];
+    if (want != null) {
+      const w = want.replace(/exit status \d+\n/g, "");
+      verdict = consoleText === w ? ' <span class="badge ok">期待出力 (' + esc(outName) + ') と一致</span>' : ' <span class="badge err">期待出力と違う</span>';
+    }
+  }
+  $("runInfo").innerHTML = r ? `<span>命令数 <b>${fmtN(r.instret)}</b></span>${r.exited ? `<span>終了コード <b>${r.code}</b></span>` : ""}${verdict}` : "";
+}
+
+let budget = 2e6;
+function runLoop() {
+  if (!running) return;
+  const t0 = performance.now();
+  const r = handle(JSON.parse(pipeline.run(budget)));
+  const el = performance.now() - t0;
+  if (r.steps >= budget && el > 0) budget = Math.max(1e5, Math.min(5e7, Math.round(budget * 14 / el)));
+  $("runBadge").textContent = `実行中 ${fmtN(r.instret)} 命令`;
+  if (halted) { stopRun(); refresh(r); finishRun(r); return; }
+  setTimeout(runLoop, 0);
+}
+function stopRun() {
+  if (!running) return;
+  running = false;
+  $("btnRun").textContent = "実行";
+  $("runBadge").textContent = "停止中";
+  updateButtons();
+}
+function updateButtons() {
+  const ok = !!cur;
+  $("btnRun").disabled = !ok;
+  for (const id of ["btnStepLine", "btnStep", "btnStepN"]) $(id).disabled = !ok || running;
+  $("btnReset").disabled = !ok || running;
+}
+$("btnRun").onclick = () => {
+  if (running) { stopRun(); refresh(); return; }
+  if (!ensureStarted()) return;
+  running = true;
+  $("btnRun").textContent = "一時停止";
+  updateButtons();
+  setTimeout(runLoop, 0);
+};
+function step(fn) {
+  if (!ensureStarted()) return;
+  const r = handle(JSON.parse(fn()));
+  refresh(r);
+  finishRun(r);
+}
+$("btnStep").onclick = () => step(() => pipeline.run(1));
+$("btnStepN").onclick = () => step(() => pipeline.run(Math.max(1, Number($("stepN").value) || 1)));
+$("btnStepLine").onclick = () => step(() => pipeline.stepLine(5e7));
+$("btnReset").onclick = () => {
+  if (!cur) return;
+  started = false;
+  ensureStarted();
+  refresh(null);
+  finishRun(null);
+};
+
+function refresh(r) {
+  const st = JSON.parse(pipeline.state());
+  if (!st) return;
+  renderRegs(st);
+  markPC(st);
+  renderSys();
+  prevState = st;
+  $("runBadge").textContent = st.halted ? "終了" : running ? "実行中" : `停止中 (${fmtN(st.instret)} 命令)`;
+  if (r === undefined) finishRun({ instret: st.instret, exited: st.halted, code: st.code });
+}
+function renderRegs(st) {
+  const p = prevState;
+  let html = "";
+  for (let i = 0; i < 16; i++) {
+    html += "<tr>";
+    for (const k of [i, i + 16]) {
+      const v = st.x[k];
+      const short = v.startsWith("00000000") ? v.slice(8) : v;
+      const ch = p && p.x[k] !== v;
+      html += `<th>${REG[k]}</th><td class="v${ch ? " changed" : ""}" title="x${k} = 0x${v} (${BigInt.asIntN(64, BigInt("0x" + v))})">${short}</td>`;
+    }
+    html += "</tr>";
+  }
+  $("regs").innerHTML = html;
+}
+function markPC(st) {
+  if (!cur) return;
+  const i = st.idx;
+  let info = `<span>pc <b>0x${hx(st.pc, 8)}</b>${st.sym ? ` &lt;${esc(st.sym)}&gt;` : ""}</span>`;
+  if (i >= 0) {
+    const l = cur.listing[i], f = cur.files[l.file];
+    info += `<span>${esc(f.name)}:${l.line} <code>${esc(l.source)}</code></span>`;
+    if (ix.userFiles.has(l.file) && l.src) info += `<span>→ <b>${esc(cur.srcName)}:${l.src}</b></span>`;
+    else if (f.source && l.src) info += `<span class="muted">(${esc(f.source)}:${l.src} の中)</span>`;
+    if (!ix.visible(l.file)) info += ` <span class="badge">ライブラリの中 (「libc / ランタイムも表示」で見えます)</span>`;
+    const g = groupFrom("mc", i);
+    applyGroup("current", g);
+    scrollGroup(g);
+    selIdx = i; renderBits(i); markReloc(i); renderHexSel();
+  } else applyGroup("current", null);
+  if (st.halted) info += `<span class="badge">終了 (コード ${st.code})</span>`;
+  $("pcInfo").innerHTML = info;
+}
+function renderSys() {
+  const list = JSON.parse(pipeline.syscalls(0)) || [];
+  let html = "<tr><th>命令数</th><th>番号</th><th>名前</th><th>引数</th><th>戻り値</th></tr>";
+  for (const s of list.slice(-300)) {
+    html += `<tr class="clickable" data-idx="${s.idx}"><td class="muted">${fmtN(s.seq)}</td><td>${s.num}</td><td><b>${esc(s.name || "?")}</b></td><td>${esc(s.args)}</td><td>${esc(s.ret)}</td></tr>`;
+  }
+  if (!list.length) html += '<tr><td colspan="5" class="muted">まだシステムコールは呼ばれていません (ecall で a7 = 番号)</td></tr>';
+  $("sysLog").innerHTML = html;
+}
+$("sysLog").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-idx]");
+  if (!tr || tr.dataset.idx === "-1") return;
+  const i = Number(tr.dataset.idx);
+  if (!ix.visible(cur.listing[i].file)) { $("showAll").checked = true; renderAsm(); renderMC(); if (prevState) markPC(prevState); }
+  scrollTo("mc", i);
+});
+
+// ---- 比較 ----
+const BENCH = [
+  { id: "c0", label: "C -O0", lang: "c", file: "fib25.c", opt: 0 },
+  { id: "c2", label: "C -O2", lang: "c", file: "fib25.c", opt: 2 },
+  { id: "lang", label: "minilang", lang: "lang", file: "fib25.lang", opt: 0 },
+];
+const FIB25_CALLS = 242785;
+let benchBusy = false;
+$("btnCompare").onclick = async () => {
+  if (benchBusy) return;
+  benchBusy = true; $("btnCompare").disabled = true;
+  const results = [];
+  try {
+    for (const b of BENCH) {
+      const src = await fetchText(b.file);
+      const info = JSON.parse(pipeline.benchStart(b.lang, b.file, src, b.opt));
+      if (info.error) throw new Error(b.label + ": " + info.error);
+      let r;
+      do {
+        r = JSON.parse(pipeline.benchRun(3e6));
+        $("cmpStatus").textContent = `${b.label} を実行中… ${fmtN(r.instret)} 命令`;
+        await new Promise((res) => setTimeout(res, 0));
+      } while (!r.done);
+      if (r.err) throw new Error(b.label + ": " + r.err);
+      results.push({ ...b, ...info, instret: r.instret, out: r.out.trim() });
+      renderCompare(results);
+    }
+    $("cmpStatus").textContent = "完了 (出力はどれも " + results.map((r) => r.out).filter((v, i, a) => a.indexOf(v) === i).join(" / ") + ")";
+  } catch (e) {
+    $("cmpStatus").textContent = "";
+    showError(String(e.message || e));
+  }
+  benchBusy = false; $("btnCompare").disabled = false;
+};
+function bars(rows, key, fmt) {
+  const max = Math.max(...rows.map((r) => r[key]));
+  return `<div class="bars">` + rows.map((r) =>
+    `<div class="lbl">${esc(r.label)}</div><div class="track" title="${esc(r.label)}: ${fmtN(r[key])}"><div class="bar bc-${r.id}" style="width:calc((100% - 13em) * ${r[key] / max})"></div><span class="val">${fmt(r)}</span></div>`).join("") + `</div>`;
+}
+function renderCompare(rows) {
+  const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  let html = `<h3 class="ct">実行した命令数 (fib(25) の表示まで。libc / ランタイムの分も含む)</h3>` +
+    bars(rows, "instret", (r) => `${fmtN(r.instret)} <span class="muted">(1 呼び出し ≈ ${(r.instret / FIB25_CALLS).toFixed(0)})</span>`) +
+    `<h3 class="ct">fib 関数の静的な命令数 (機械語の命令語 / アセンブリの行)</h3>` +
+    bars(rows, "static", (r) => `${r.static} <span class="muted">/ ${r.lines} 行 (${esc(r.func)})</span>`);
+  if (by.c2 && by.lang) {
+    html += `<p class="comparenote">minilang は C -O2 の <b>${(by.lang.instret / by.c2.instret).toFixed(1)} 倍</b>の命令を実行しました。` +
+      `動的型なので、<code>n &lt; 2</code> や <code>n - 1</code> のたびに「数値か?」のタグ検査が入り、関数呼び出しはクロージャ (<code>rt_checkcall</code> → <code>jalr</code>) 経由、関数の入口ではスタック残量も確かめます。` +
+      `C では型がコンパイル時に決まるので、<code>addiw a0, a0, -1</code> の 1 命令です。` +
+      (by.c0 ? ` -O0 → -O2 では ${((1 - by.c2.instret / by.c0.instret) * 100).toFixed(0)}% 減りました。` : "") +
+      ` 静的な命令数は <code>call</code> が auipc + jalr の 2 語になるため、アセンブリの行数より少し多くなります。</p>`;
+  }
+  $("cmpView").innerHTML = html;
+  $("cmpView").classList.remove("muted");
+}
+
+// ---- ツールバー ----
+$("btnCompile").onclick = compile;
+$("example").onchange = () => { if ($("example").value) loadExample($("example").value); };
+$("lang").onchange = () => {
+  $("opt").disabled = $("lang").value !== "c";
+  loadExample(DEFAULTS[$("lang").value]);
+};
+$("opt").onchange = () => { if (cur || $("src").value) compile(); };
+
+// ---- 起動 ----
+async function main() {
+  try {
+    const go = new Go();
+    const [wasm] = await Promise.all([
+      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject),
+      loadExamples(),
+    ]);
+    go.run(wasm.instance);
+    $("loading").hidden = true;
+    $("app").hidden = false;
+    $("opt").value = "0";
+    await loadExample("fib.c");
+  } catch (e) {
+    $("loading").hidden = true;
+    showError(String(e && e.stack || e));
+  }
+}
+main();
+</script>
+</body>
+</html>

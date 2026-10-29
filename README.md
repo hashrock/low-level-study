@@ -30,6 +30,28 @@
 
 ---
 
+## ブラウザで動かす（内部状態を覗く）
+
+全部 Go → WebAssembly にして、ブラウザ上で動かしながら中身を可視化できます。
+
+```sh
+./web/build.sh                      # 全ページの wasm をビルド（os は zig build も実行）
+python3 -m http.server -d web 8000  # → http://localhost:8000/
+```
+
+| ページ | 見られるもの |
+|---|---|
+| `os/` | zigos を自作 CPU で起動。レジスタ・CSR・特権モード、逆アセンブル、トラップ／syscall ログ、メモリ |
+| `pipeline/` | C / minilang → アセンブリ → 機械語のビット → ELF → 実行。3 カラムの相互ハイライト、ソース行単位のステップ、命令数比較 |
+| `lang/` | バイトコード VM のステップ実行。値スタック・フレーム・クロージャが共有するセル |
+| `db/` | B+tree の図と分割のハイライト、4KB ページの hex、ページキャッシュ、主キー検索 vs 全件走査 |
+| `net/` | 2 ノード間のパケットをシーケンス図で。ロス率・遅延、層ごとの分解、TCP 状態遷移、pcap ダウンロード |
+| `runtime/` | イベントループ（タスク・microtask・timer・非同期 op）、実行順クイズ、パーミッションログ |
+
+ページの作り方の決まりごとは [`web/CONVENTIONS.md`](web/CONVENTIONS.md)。
+
+---
+
 ## おすすめの遊び方
 
 ### 1. 自作スタックを全部通す（compiler → asm → emu）
@@ -39,7 +61,7 @@
 ```sh
 cd compiler
 go run . emit examples/fib.lang | less          # 生成アセンブリ（ソース行・日本語コメント付き）
-go run . build examples/fib.lang -o /tmp/fib     # 内部で ../asm を呼んで ELF を作る
+go run . build examples/fib.lang -o /tmp/fib     # ../asm のライブラリ (rvasm) で ELF を作る
 cd ../emu
 go run . run --stats /tmp/fib                    # 実行命令数と MIPS が出る
 go run . run --trace /tmp/fib | head -50         # 1 命令ずつのトレース
@@ -47,7 +69,7 @@ go run . run --trace /tmp/fib | head -50         # 1 命令ずつのトレース
 
 やってみること:
 - 同じ `fib.lang` を `cd lang && go run . -dis examples/fib.lang` でバイトコードにして、ネイティブコードと見比べる
-- `fib(25)` の実行命令数（約 1700 万）を、`compiler/codegen.go` をいじって減らしてみる（レジスタ割り当て、インライン化…）
+- `fib(25)` の実行命令数（約 1700 万）を、`compiler/minicc/codegen.go` をいじって減らしてみる（レジスタ割り当て、インライン化…）
 - 同じ fib を C で書いた `cc/` 版と比べる（静的型だと約 490 万命令。タグ検査やランタイム呼び出しが消える）:
   ```sh
   cd cc
@@ -161,6 +183,6 @@ go run . --allow-read=examples/data --timeout=2s examples/sandbox_escape.js
 ## テスト
 
 ```sh
-for d in db lang runtime emu asm compiler cc net; do (cd $d && go test ./...); done
+for d in db lang runtime emu asm compiler cc net web/pipeline/wasm; do (cd $d && go test ./...); done
 cd os && zig build && ./test.exp                 # QEMU 上でシェルを自動操作
 ```

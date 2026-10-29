@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"rvasm/rvasm"
 )
 
 func main() {
@@ -75,12 +77,12 @@ func defaultOut(out string) string {
 	return out
 }
 
-func assembleFile(path string) (*object, error) {
+func assembleFile(path string) (*rvasm.Object, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return assemble(path, string(src))
+	return rvasm.Assemble(path, string(src))
 }
 
 func cmdAs(in, out string) error {
@@ -88,21 +90,17 @@ func cmdAs(in, out string) error {
 	if err != nil {
 		return err
 	}
-	b, err := writeObject(o)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(out, b, 0o644)
+	return os.WriteFile(out, o.ELF(), 0o644)
 }
 
 func cmdLd(inputs []string, out string) error {
-	var objs []*object
+	var objs []*rvasm.Object
 	for _, path := range inputs {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		o, err := readObject(path, data)
+		o, err := rvasm.ReadObject(path, data)
 		if err != nil {
 			return err
 		}
@@ -111,29 +109,22 @@ func cmdLd(inputs []string, out string) error {
 	return linkAndWrite(objs, out)
 }
 
-// cmdBuild は .s をアセンブルし、いったん .o 形式に書き出して読み直してからリンクする。
-// (メモリ上の object を直接渡すこともできるが、as → ld と同じ経路を通すため)
+// cmdBuild は .s をアセンブルしてリンクする。
+// (rvasm.Assemble は内部でいったん .o 形式に書き出して読み直すので、as → ld と同じ経路を通る)
 func cmdBuild(inputs []string, out string) error {
-	var objs []*object
+	var objs []*rvasm.Object
 	for _, path := range inputs {
 		o, err := assembleFile(path)
 		if err != nil {
 			return err
 		}
-		b, err := writeObject(o)
-		if err != nil {
-			return err
-		}
-		if o, err = readObject(path, b); err != nil {
-			return err
-		}
 		objs = append(objs, o)
 	}
 	return linkAndWrite(objs, out)
 }
 
-func linkAndWrite(objs []*object, out string) error {
-	b, err := link(objs)
+func linkAndWrite(objs []*rvasm.Object, out string) error {
+	b, err := rvasm.Link(objs...)
 	if err != nil {
 		return err
 	}
